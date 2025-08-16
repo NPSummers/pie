@@ -1,5 +1,4 @@
 use inkwell::context::Context;
-use inkwell::module::Module as LlvmModule;
 use inkwell::values::FunctionValue;
 use std::collections::HashMap;
 

@@ -5,12 +5,9 @@ mod typecheck;
 mod codegen;
 mod std;
 
-use ast::*;
 use inkwell::context::Context;
 use inkwell::OptimizationLevel;
-use inkwell::execution_engine::{ExecutionEngine, JitFunction};
-use inkwell::module::Module;
-use inkwell::passes::PassManager;
+use inkwell::execution_engine::JitFunction;
 use ::std::env;
 use ::std::fs;
 
