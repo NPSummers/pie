@@ -1,0 +1,5 @@
+module test {
+    def int hello() {
+        return 42;
+    }
+}

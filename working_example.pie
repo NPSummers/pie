@@ -1,0 +1,19 @@
+use pie/std;
+
+module demo {
+    def int get_answer() {
+        return 42;
+    }
+    
+    def int get_meaning() {
+        return 7;
+    }
+}
+
+public def void main() {
+    let int answer = demo::get_answer();
+    std::print(answer);
+    
+    let int meaning = demo::get_meaning();
+    std::print(meaning);
+}

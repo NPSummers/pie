@@ -1,0 +1,31 @@
+module calculator {
+    def int add(int a, int b) {
+        return a + b;
+    }
+    
+    def int subtract(int a, int b) {
+        return a - b;
+    }
+    
+    def int multiply(int a, int b) {
+        return a * b;
+    }
+}
+
+module main {
+    def int run() {
+        let int x = 10;
+        let int y = 5;
+        
+        let int sum = calculator::add(x, y);
+        std::print(sum);
+        
+        let int diff = calculator::subtract(x, y);
+        std::print(diff);
+        
+        let int product = calculator::multiply(x, y);
+        std::print(product);
+        
+        return 0;
+    }
+}
