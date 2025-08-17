@@ -1,89 +1,115 @@
 use crate::ast::*;
+use logos::Logos;
 
 #[derive(Debug, Clone)]
 struct Tok {
     text: String,
 }
 
+#[derive(Logos, Debug, PartialEq)]
+enum LToken {
+    // skip whitespace and comments
+    #[regex(r"[ \t\n\r]+", logos::skip)]
+    #[regex(r"#.*", logos::skip)]
+    Skip,
+
+    // literals
+    #[regex(r#""[^"]*""#)]
+    StringLiteral,
+    #[regex(r"[0-9]+")]
+    Number,
+
+    // identifiers (allow slash for module paths like `pie/std`)
+    #[regex(r"[A-Za-z_][A-Za-z0-9_/]*")]
+    Ident,
+
+    // multi-char punctuation
+    #[token("::")]
+    DoubleColon,
+    #[token("+=")]
+    PlusEq,
+    #[token("-=")]
+    MinusEq,
+    #[token("*=")]
+    StarEq,
+    #[token("/=")]
+    SlashEq,
+
+    // single-char tokens
+    #[token("+")]
+    Plus,
+    #[token("-")]
+    Minus,
+    #[token("*")]
+    Star,
+    #[token("/")]
+    Slash,
+    #[token(":")]
+    Colon,
+    #[token("(")]
+    LParen,
+    #[token(")")]
+    RParen,
+    #[token("{")]
+    LBrace,
+    #[token("}")]
+    RBrace,
+    #[token("[")]
+    LBracket,
+    #[token("]")]
+    RBracket,
+    #[token(",")]
+    Comma,
+    #[token(";")]
+    Semicolon,
+    #[token(".")]
+    Dot,
+    #[token("=")]
+    Eq,
+
+    #[error]
+    Error,
+}
+
 fn tokenize(src: &str) -> Vec<Tok> {
+    let mut lexer = LToken::lexer(src);
     let mut tokens = Vec::new();
-    let mut chars = src.chars().peekable();
-    while let Some(&c) = chars.peek() {
-        if c.is_whitespace() {
-            chars.next();
-            continue;
-        }
-        if c == '#' {
-            for d in chars.by_ref() {
-                if d == '\n' {
-                    break;
-                }
+    while let Some(tok) = lexer.next() {
+        // logos gives us the slice for each token via lexer.slice()
+        match tok {
+            LToken::Skip => continue,
+            LToken::StringLiteral | LToken::Number | LToken::Ident => {
+                tokens.push(Tok {
+                    text: lexer.slice().to_string(),
+                });
             }
-            continue;
-        }
-        if c.is_ascii_alphabetic() || c == '_' {
-            let mut s = String::new();
-            while let Some(&d) = chars.peek() {
-                if d.is_ascii_alphanumeric() || d == '_' || d == '/' {
-                    s.push(d);
-                    chars.next();
-                } else {
-                    break;
-                }
+            LToken::DoubleColon => tokens.push(Tok { text: "::".into() }),
+            LToken::PlusEq => tokens.push(Tok { text: "+=".into() }),
+            LToken::MinusEq => tokens.push(Tok { text: "-=".into() }),
+            LToken::StarEq => tokens.push(Tok { text: "*=".into() }),
+            LToken::SlashEq => tokens.push(Tok { text: "/=".into() }),
+            LToken::Plus => tokens.push(Tok { text: "+".into() }),
+            LToken::Minus => tokens.push(Tok { text: "-".into() }),
+            LToken::Star => tokens.push(Tok { text: "*".into() }),
+            LToken::Slash => tokens.push(Tok { text: "/".into() }),
+            LToken::Colon => tokens.push(Tok { text: ":".into() }),
+            LToken::LParen => tokens.push(Tok { text: "(".into() }),
+            LToken::RParen => tokens.push(Tok { text: ")".into() }),
+            LToken::LBrace => tokens.push(Tok { text: "{".into() }),
+            LToken::RBrace => tokens.push(Tok { text: "}".into() }),
+            LToken::LBracket => tokens.push(Tok { text: "[".into() }),
+            LToken::RBracket => tokens.push(Tok { text: "]".into() }),
+            LToken::Comma => tokens.push(Tok { text: ",".into() }),
+            LToken::Semicolon => tokens.push(Tok { text: ";".into() }),
+            LToken::Dot => tokens.push(Tok { text: ".".into() }),
+            LToken::Eq => tokens.push(Tok { text: "=".into() }),
+            LToken::Error => {
+                // fallback: push the raw slice (likely a single char)
+                tokens.push(Tok {
+                    text: lexer.slice().to_string(),
+                });
             }
-            tokens.push(Tok { text: s });
-            continue;
         }
-        if c.is_ascii_digit() {
-            let mut s = String::new();
-            while let Some(&d) = chars.peek() {
-                if d.is_ascii_digit() {
-                    s.push(d);
-                    chars.next();
-                } else {
-                    break;
-                }
-            }
-            tokens.push(Tok { text: s });
-            continue;
-        }
-        if c == '"' {
-            chars.next();
-            let mut s = String::new();
-            for d in chars.by_ref() {
-                if d == '"' {
-                    break;
-                }
-                s.push(d);
-            }
-            tokens.push(Tok {
-                text: format!("\"{}\"", s),
-            });
-            continue;
-        }
-        if c == ':' {
-            chars.next();
-            if let Some(&':') = chars.peek() {
-                chars.next();
-                tokens.push(Tok { text: "::".into() });
-                continue;
-            }
-            tokens.push(Tok { text: ":".into() });
-            continue;
-        }
-        if c == '+' {
-            chars.next();
-            if let Some(&'=') = chars.peek() {
-                chars.next();
-                tokens.push(Tok { text: "+=".into() });
-                continue;
-            }
-            tokens.push(Tok { text: "+".into() });
-            continue;
-        }
-        tokens.push(Tok {
-            text: chars.next().unwrap().to_string(),
-        });
     }
     tokens
 }
