@@ -1,0 +1,7 @@
+use pie/std;
+
+public def void main() {
+    std::print("hello");
+}
+
+

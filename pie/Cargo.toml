@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0"
 inkwell = { version = "0.4", features = ["llvm17-0", "llvm17-0-prefer-dynamic"] }
+ureq = "2.5"
 
 # Requires a system LLVM installation (LLVM 17). The install step below will
 # add the official LLVM apt repo and install LLVM 17 in WSL. After that we'll

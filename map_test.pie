@@ -1,0 +1,10 @@
+use pie/std;
+
+public def void main() {
+    let map h = std::map::new();
+    h.set("foo", "bar");
+    let string s = std::to_string(h);
+    std::print(s);
+}
+
+

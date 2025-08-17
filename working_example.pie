@@ -6,7 +6,9 @@ module demo {
     }
     
     def int get_meaning() {
-        return 7;
+        let int x = 10;
+        x += 6;
+        return x+10;
     }
 }
 
