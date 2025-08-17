@@ -1,313 +1,226 @@
+#![allow(improper_ctypes_definitions)]
+use std::cell::RefCell;
 use std::collections::HashMap;
-use std::ffi::{CStr, CString};
-use std::os::raw::c_char;
-use std::ptr;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::fmt::{Debug, Display};
+use std::ptr::NonNull;
+use std::rc::Rc;
 
 #[derive(Debug)]
-pub enum ValueKind {
+pub enum Value {
     Int(i64),
     Str(String),
-    List(Vec<*mut GcBox>),
-    Map(HashMap<String, *mut GcBox>),
+    List(Vec<GcBox>),
+    Map(HashMap<String, GcBox>),
 }
 
-#[derive(Debug)]
-pub struct GcBox {
-    refcount: AtomicUsize,
-    kind: ValueKind,
+impl Display for Value {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use Value::*;
+        match self {
+            Int(v) => write!(f, "{v}"),
+            Str(s) => write!(f, "{s}"),
+            List(l) => {
+                write!(f, "[")?;
+                let mut values = l.iter();
+                if let Some(v) = values.next() {
+                    v.fmt(f)?;
+                }
+                for v in values {
+                    write!(f, ", {}", v.as_ref().0.borrow())?;
+                }
+                write!(f, "]")
+            }
+            Map(m) => {
+                write!(f, "{{")?;
+                let mut values = m.iter();
+                if let Some((k, v)) = values.next() {
+                    write!(f, "{k}: {v}", v = v.as_ref().0.borrow())?;
+                }
+                for (k, v) in m {
+                    write!(f, ", {k}: {v}", v = v.as_ref().0.borrow())?;
+                }
+                write!(f, "}}")
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+#[repr(transparent)]
+pub struct GcBox(NonNull<RefCell<Value>>);
+
+impl Drop for GcBox {
+    fn drop(&mut self) {
+        eprintln!("dropping {self:?}");
+        unsafe { Rc::from_raw(self.0.as_ptr()) };
+    }
+}
+
+const _: () = assert!(core::mem::size_of::<GcBox>() == core::mem::size_of::<usize>());
+const _: () = assert!(core::mem::size_of::<Option<GcBox>>() == core::mem::size_of::<usize>());
+const _: () = assert!(core::mem::size_of::<GcRef>() == core::mem::size_of::<usize>());
+
+impl GcBox {
+    pub fn as_ref<'s>(&'s self) -> GcRef<'s> {
+        GcRef(unsafe { self.0.as_ref() })
+    }
+}
+
+impl From<String> for GcBox {
+    fn from(value: String) -> Self {
+        GcBox::new(Value::Str(value))
+    }
+}
+
+impl From<&str> for GcBox {
+    fn from(value: &str) -> Self {
+        GcBox::new(Value::Str(value.to_owned()))
+    }
+}
+
+impl From<i64> for GcBox {
+    fn from(value: i64) -> Self {
+        GcBox::new(Value::Int(value))
+    }
+}
+
+#[derive(Debug, Clone)]
+#[repr(transparent)]
+// SAFETY: A GcRef may only be created via the as_ref method on GcBox
+pub struct GcRef<'a>(&'a RefCell<Value>);
+
+impl GcRef<'_> {
+    pub unsafe fn new_box_noincrement(&self) -> Rc<RefCell<Value>> {
+        // This creates a new Rc without incrementing the refcount
+        unsafe { Rc::from_raw(core::ptr::from_ref(self.0)) }
+    }
+
+    pub fn new_box(&self) -> GcBox {
+        let rc = unsafe { self.new_box_noincrement() };
+
+        GcBox(unsafe { NonNull::new_unchecked(Rc::into_raw(rc).cast_mut()) })
+    }
 }
 
 impl GcBox {
-    fn new(kind: ValueKind) -> *mut GcBox {
-        let b = Box::new(GcBox {
-            refcount: AtomicUsize::new(1),
-            kind,
-        });
-        Box::into_raw(b)
+    fn new(val: Value) -> GcBox {
+        let ptr = Rc::into_raw(Rc::new(RefCell::new(val)));
+        unsafe { GcBox(NonNull::new_unchecked(ptr.cast_mut())) }
     }
 }
 
 #[no_mangle]
-pub extern "C" fn pie_new_int(v: i64) -> *mut GcBox {
-    GcBox::new(ValueKind::Int(v))
+pub extern "C" fn pie_new_int(v: i64) -> GcBox {
+    v.into()
 }
 
 #[no_mangle]
-pub extern "C" fn pie_new_string(s: *const c_char) -> *mut GcBox {
-    if s.is_null() {
-        return ptr::null_mut();
-    }
-    let cs = unsafe { CStr::from_ptr(s) };
-    let st = cs.to_string_lossy().into_owned();
-    GcBox::new(ValueKind::Str(st))
-}
-
-#[no_mangle]
-pub extern "C" fn pie_inc_ref(p: *mut GcBox) {
-    if p.is_null() {
-        return;
-    }
+pub extern "C" fn pie_new_string(ptr: *const u8, len: u64) -> GcBox {
     unsafe {
-        (*p).refcount.fetch_add(1, Ordering::SeqCst);
+        let bytes = core::slice::from_raw_parts(ptr, len as usize);
+        // SAFETY: The frontend must ensure the strings are UTF-8
+        let string = str::from_utf8_unchecked(bytes).to_owned();
+        string.into()
     }
 }
 
 #[no_mangle]
-pub extern "C" fn pie_dec_ref(p: *mut GcBox) {
-    if p.is_null() {
-        return;
-    }
-    let prev = unsafe { (*p).refcount.fetch_sub(1, Ordering::SeqCst) };
-    if prev == 1 {
-        // free contents recursively
-        unsafe {
-            match &mut (*p).kind {
-                ValueKind::List(v) => {
-                    for &elem in v.iter() {
-                        pie_dec_ref(elem);
-                    }
-                }
-                ValueKind::Map(m) => {
-                    for (_k, &val) in m.iter() {
-                        pie_dec_ref(val);
-                    }
-                }
-                ValueKind::Str(_) | ValueKind::Int(_) => {}
-            }
-            // drop box
-            let _ = Box::from_raw(p);
-        }
-    }
+pub extern "C" fn pie_inc_ref(p: GcRef) {
+    // This avoids running Drop for p, which leaves the refcount with 1 extra reference
+    core::mem::forget(p.new_box());
 }
 
 #[no_mangle]
-pub extern "C" fn pie_list_new() -> *mut GcBox {
-    GcBox::new(ValueKind::List(Vec::new()))
+pub unsafe extern "C" fn pie_dec_ref(p: GcRef) {
+    _ = p.new_box_noincrement();
 }
 
 #[no_mangle]
-pub extern "C" fn pie_list_len(list: *mut GcBox) -> i64 {
-    if list.is_null() {
+pub extern "C" fn pie_list_new() -> GcBox {
+    GcBox::new(Value::List(Vec::new()))
+}
+
+#[no_mangle]
+pub extern "C" fn pie_list_len(list: GcRef) -> i64 {
+    let Value::List(v) = &*list.0.borrow() else {
         return 0;
-    }
-    unsafe {
-        match &(*list).kind {
-            ValueKind::List(v) => v.len() as i64,
-            _ => 0,
-        }
-    }
+    };
+    v.len() as i64
 }
 
 #[no_mangle]
-pub extern "C" fn pie_list_get(list: *mut GcBox, idx: i64) -> *mut GcBox {
-    if list.is_null() {
-        return ptr::null_mut();
+pub extern "C" fn pie_list_get(list: GcRef, idx: i64) -> Option<GcBox> {
+    let Value::List(v) = &*list.0.borrow() else {
+        return None;
+    };
+    if idx.is_negative() {
+        return None;
     }
-    unsafe {
-        match &(*list).kind {
-            ValueKind::List(v) => {
-                let i = idx as usize;
-                if i >= v.len() {
-                    return ptr::null_mut();
-                }
-                let val = v[i];
-                pie_inc_ref(val);
-                val
-            }
-            _ => ptr::null_mut(),
-        }
-    }
+    Some(v[idx as usize].clone())
 }
 
 #[no_mangle]
-pub extern "C" fn pie_list_push(list: *mut GcBox, val: *mut GcBox) {
-    if list.is_null() || val.is_null() {
+pub extern "C" fn pie_list_push(list: GcRef, val: GcRef) {
+    let Value::List(v) = &mut *list.0.borrow_mut() else {
         return;
-    }
-    unsafe {
-        if let ValueKind::List(v) = &mut (*list).kind {
-            pie_inc_ref(val);
-            v.push(val);
-        }
-    }
+    };
+    v.push(val.new_box());
 }
 
 #[no_mangle]
-pub extern "C" fn pie_map_new() -> *mut GcBox {
-    GcBox::new(ValueKind::Map(HashMap::new()))
+pub extern "C" fn pie_map_new() -> GcBox {
+    GcBox::new(Value::Map(HashMap::new()))
 }
 
 #[no_mangle]
-pub extern "C" fn pie_map_set(map: *mut GcBox, key: *mut GcBox, val: *mut GcBox) {
-    if map.is_null() || key.is_null() {
-        return;
-    }
+pub extern "C" fn pie_map_set(map: GcRef, key: GcRef, val: GcRef) {
     // extract key string from a PIE GcBox (string or int)
-    let k = unsafe {
-        match &(*key).kind {
-            ValueKind::Str(s) => s.clone(),
-            ValueKind::Int(i) => format!("{}", i),
-            _ => return,
-        }
+    let k = key.0.borrow().to_string();
+    if let Value::Map(m) = &mut *map.0.borrow_mut() {
+        m.insert(k, val.new_box());
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn pie_map_get(map: GcRef, key: GcRef) -> Option<GcBox> {
+    let k = key.0.borrow().to_string();
+    if let Value::Map(m) = &*map.0.borrow() {
+        return m.get(&k).cloned();
+    }
+    None
+}
+
+#[no_mangle]
+pub extern "C" fn pie_to_string(val: GcRef) -> GcBox {
+    let s = val.0.borrow().to_string();
+    s.into()
+}
+
+#[no_mangle]
+pub extern "C" fn pie_print(val: GcRef) {
+    println!("{}", val.0.borrow())
+}
+
+#[no_mangle]
+pub extern "C" fn pie_string_concat(a: GcRef, b: GcRef) -> GcBox {
+    let s = format!("{}{}", a.0.borrow(), b.0.borrow());
+    s.into()
+}
+
+#[no_mangle]
+pub extern "C" fn pie_http_get(url_val: GcRef, headers: GcRef) -> GcBox {
+    let Value::Str(url) = &*url_val.0.borrow() else {
+        return "http error: expected url to be a string".into();
     };
-    unsafe {
-        if let ValueKind::Map(m) = &mut (*map).kind {
-            if let Some(old) = m.insert(k, val) {
-                pie_dec_ref(old);
-            }
-            pie_inc_ref(val);
-        }
-    }
-}
-
-#[no_mangle]
-pub extern "C" fn pie_map_get(map: *mut GcBox, key: *mut GcBox) -> *mut GcBox {
-    if map.is_null() || key.is_null() {
-        return ptr::null_mut();
-    }
-    let k = unsafe {
-        match &(*key).kind {
-            ValueKind::Str(s) => s.clone(),
-            ValueKind::Int(i) => format!("{}", i),
-            _ => return ptr::null_mut(),
-        }
-    };
-    unsafe {
-        match &(*map).kind {
-            ValueKind::Map(m) => {
-                if let Some(&v) = m.get(&k) {
-                    pie_inc_ref(v);
-                    return v;
-                }
-                ptr::null_mut()
-            }
-            _ => ptr::null_mut(),
-        }
-    }
-}
-
-#[no_mangle]
-pub extern "C" fn pie_to_string(val: *mut GcBox) -> *mut GcBox {
-    if val.is_null() {
-        return ptr::null_mut();
-    }
-    // Helper to format a value (recursively) into a Rust String
-    fn format_val(vptr: *mut GcBox) -> String {
-        if vptr.is_null() {
-            return "null".to_string();
-        }
-        unsafe {
-            match &(*vptr).kind {
-                ValueKind::Int(i) => format!("{}", i),
-                ValueKind::Str(s) => s.clone(),
-                ValueKind::List(vec) => {
-                    let mut parts: Vec<String> = Vec::new();
-                    for &elem in vec.iter() {
-                        parts.push(format_val(elem));
-                    }
-                    format!("[{}]", parts.join(", "))
-                }
-                ValueKind::Map(map) => {
-                    let mut parts: Vec<String> = Vec::new();
-                    for (k, &vptr) in map.iter() {
-                        parts.push(format!("{}: {}", k, format_val(vptr)));
-                    }
-                    format!("{{{}}}", parts.join(", "))
-                }
-            }
-        }
-    }
-
-    let s = format_val(val);
-    let c = CString::new(s).unwrap();
-    pie_new_string(c.as_ptr())
-}
-
-#[no_mangle]
-pub extern "C" fn pie_print(val: *mut GcBox) {
-    if val.is_null() {
-        return;
-    }
-    unsafe {
-        match &(*val).kind {
-            ValueKind::Str(s) => println!("{}", s),
-            ValueKind::Int(i) => println!("{}", i),
-            _ => println!("<value>"),
-        }
-    }
-}
-
-#[no_mangle]
-pub extern "C" fn pie_string_concat(a: *mut GcBox, b: *mut GcBox) -> *mut GcBox {
-    let sa = if a.is_null() {
-        String::new()
-    } else {
-        unsafe {
-            match &(*a).kind {
-                ValueKind::Str(s) => s.clone(),
-                ValueKind::Int(i) => format!("{}", i),
-                _ => "<value>".to_string(),
-            }
-        }
-    };
-    let sb = if b.is_null() {
-        String::new()
-    } else {
-        unsafe {
-            match &(*b).kind {
-                ValueKind::Str(s) => s.clone(),
-                ValueKind::Int(i) => format!("{}", i),
-                _ => "<value>".to_string(),
-            }
-        }
-    };
-    let c = CString::new(format!("{}{}", sa, sb)).unwrap();
-    pie_new_string(c.as_ptr())
-}
-
-#[no_mangle]
-pub extern "C" fn pie_http_get(url_val: *mut GcBox, headers_map: *mut GcBox) -> *mut GcBox {
-    if url_val.is_null() {
-        let c = CString::new("http error: null url").unwrap();
-        return pie_new_string(c.as_ptr());
-    }
-
-    let u = unsafe {
-        match &(*url_val).kind {
-            ValueKind::Str(s) => s.clone(),
-            ValueKind::Int(i) => format!("{}", i),
-            _ => {
-                return pie_new_string(
-                    CString::new("http error: expected string url")
-                        .unwrap()
-                        .as_ptr(),
-                )
-            }
-        }
+    let Value::Map(headers) = &*headers.0.borrow() else {
+        return "http error: expected headers to be a map".into();
     };
 
     // build request and apply headers if provided
-    let mut req = ureq::get(&u);
-    if !headers_map.is_null() {
-        unsafe {
-            if let ValueKind::Map(m) = &(*headers_map).kind {
-                for (k, &vptr) in m.iter() {
-                    if vptr.is_null() {
-                        continue;
-                    }
-                    match &(*vptr).kind {
-                        ValueKind::Str(sv) => {
-                            req = req.set(k, sv);
-                        }
-                        ValueKind::Int(iv) => {
-                            req = req.set(k, &format!("{}", iv));
-                        }
-                        _ => {}
-                    }
-                }
-            }
-        }
+    let mut req = ureq::get(url);
+
+    for (k, v) in headers {
+        req = req.set(k, &v.as_ref().0.borrow().to_string());
     }
 
     match req.call() {
@@ -317,75 +230,49 @@ pub extern "C" fn pie_http_get(url_val: *mut GcBox, headers_map: *mut GcBox) -> 
             if body.is_empty() {
                 body = format!("(status {})", status);
             }
-            let c = CString::new(body).unwrap();
-            pie_new_string(c.as_ptr())
+            body.into()
         }
         Err(e) => {
             let msg = format!("http error: {}", e);
-            let c = CString::new(msg).unwrap();
-            pie_new_string(c.as_ptr())
+            msg.into()
         }
     }
 }
 
 #[no_mangle]
-pub extern "C" fn pie_add(a: *mut GcBox, b: *mut GcBox) -> *mut GcBox {
-    if a.is_null() || b.is_null() {
-        return ptr::null_mut();
-    }
-    unsafe {
-        match (&(*a).kind, &(*b).kind) {
-            (ValueKind::Int(ia), ValueKind::Int(ib)) => GcBox::new(ValueKind::Int(ia + ib)),
-            (ValueKind::Str(sa), ValueKind::Str(sb)) => {
-                let result = format!("{}{}", sa, sb);
-                let c = CString::new(result).unwrap();
-                pie_new_string(c.as_ptr())
-            }
-            _ => ptr::null_mut(),
-        }
-    }
+pub extern "C" fn pie_add(a: GcRef, b: GcRef) -> Option<GcBox> {
+    use Value::*;
+    Some(match (&*a.0.borrow(), &*b.0.borrow()) {
+        (Int(a), Int(b)) => (a + b).into(),
+        (Str(a), Str(b)) => format!("{a}{b}").into(),
+        _ => return None,
+    })
 }
 
 #[no_mangle]
-pub extern "C" fn pie_sub(a: *mut GcBox, b: *mut GcBox) -> *mut GcBox {
-    if a.is_null() || b.is_null() {
-        return ptr::null_mut();
-    }
-    unsafe {
-        match (&(*a).kind, &(*b).kind) {
-            (ValueKind::Int(ia), ValueKind::Int(ib)) => GcBox::new(ValueKind::Int(ia - ib)),
-            _ => ptr::null_mut(),
-        }
-    }
+pub extern "C" fn pie_sub(a: GcRef, b: GcRef) -> Option<GcBox> {
+    use Value::*;
+    Some(match (&*a.0.borrow(), &*b.0.borrow()) {
+        (Int(a), Int(b)) => (a - b).into(),
+        _ => return None,
+    })
 }
 
 #[no_mangle]
-pub extern "C" fn pie_mul(a: *mut GcBox, b: *mut GcBox) -> *mut GcBox {
-    if a.is_null() || b.is_null() {
-        return ptr::null_mut();
-    }
-    unsafe {
-        match (&(*a).kind, &(*b).kind) {
-            (ValueKind::Int(ia), ValueKind::Int(ib)) => GcBox::new(ValueKind::Int(ia * ib)),
-            _ => ptr::null_mut(),
-        }
-    }
+pub extern "C" fn pie_mul(a: GcRef, b: GcRef) -> Option<GcBox> {
+    use Value::*;
+    Some(match (&*a.0.borrow(), &*b.0.borrow()) {
+        (Int(a), Int(b)) => (a * b).into(),
+        _ => return None,
+    })
 }
 
 #[no_mangle]
-pub extern "C" fn pie_div(a: *mut GcBox, b: *mut GcBox) -> *mut GcBox {
-    if a.is_null() || b.is_null() {
-        return ptr::null_mut();
-    }
-    unsafe {
-        match (&(*a).kind, &(*b).kind) {
-            (ValueKind::Int(ia), ValueKind::Int(ib)) => {
-                if *ib == 0 {
-                    return ptr::null_mut();
-                }
-                GcBox::new(ValueKind::Int(ia / ib))
-            }
-            _ => ptr::null_mut(),
-        }
-    }
+pub extern "C" fn pie_div(a: GcRef, b: GcRef) -> Option<GcBox> {
+    use Value::*;
+    Some(match (&*a.0.borrow(), &*b.0.borrow()) {
+        (_, Int(0)) => return None,
+        (Int(a), Int(b)) => (a / b).into(),
+        _ => return None,
+    })
 }

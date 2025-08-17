@@ -12,7 +12,6 @@ pub struct CodeGen<'ctx> {
     pub context: &'ctx Context,
     pub module: LlvmModule<'ctx>,
     pub builder: Builder<'ctx>,
-    // symbol table: function name -> FunctionValue
     pub functions: HashMap<String, FunctionValue<'ctx>>,
 }
 
@@ -37,7 +36,7 @@ impl<'ctx> CodeGen<'ctx> {
         let fn_new_int = i8ptr_type.fn_type(&[i64_type.into()], false);
         let _ = self.module.add_function("pie_new_int", fn_new_int, None);
 
-        let fn_new_str = i8ptr_type.fn_type(&[i8ptr_type.into()], false);
+        let fn_new_str = i8ptr_type.fn_type(&[i8ptr_type.into(), i64_type.into()], false);
         let _ = self.module.add_function("pie_new_string", fn_new_str, None);
 
         let fn_inc = voidt.fn_type(&[i8ptr_type.into()], false);
@@ -321,9 +320,10 @@ impl<'ctx> CodeGen<'ctx> {
                     .expect("gstr");
                 let ptr = gv.as_pointer_value();
                 let fn_new_str = self.module.get_function("pie_new_string").unwrap();
+                let len = self.context.i64_type().const_int(s.len() as u64, false);
                 let call = self
                     .builder
-                    .build_call(fn_new_str, &[ptr.into()], "newstr")
+                    .build_call(fn_new_str, &[ptr.into(), len.into()], "newstr")
                     .expect("call");
                 Some(call.try_as_basic_value().left().unwrap())
             }
