@@ -24,7 +24,7 @@ fn main() -> anyhow::Result<()> {
 
     let prog = parser::parse(&src).map_err(|e| anyhow::anyhow!("parse error: {}", e))?;
 
-    println!("{prog:#?}");
+    // println!("{prog:#?}");
 
     typecheck::typecheck(&prog).map_err(|e| anyhow::anyhow!("type error: {}", e))?;
 
@@ -38,7 +38,7 @@ fn main() -> anyhow::Result<()> {
     cg.compile_program(&prog, &stdlib)
         .map_err(|e| anyhow::anyhow!("compilation error: {}", e))?;
 
-    cg.module.print_to_stderr();
+    // cg.module.print_to_stderr();
 
     // todo!();
 
