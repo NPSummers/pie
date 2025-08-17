@@ -43,7 +43,7 @@ pub fn typecheck(prog: &Program) -> Result<(), String> {
     // check function bodies
     for item in &prog.items {
         if let Item::Module(m) = item {
-            let sigs = module_fns.get(&m.name).unwrap();
+            let _sigs = module_fns.get(&m.name).unwrap();
             for mi in &m.items {
                 if let ModuleItem::Function(f) = mi {
                     // build local env: params
@@ -119,13 +119,13 @@ fn infer_expr_type(
         }
         Expression::Call { callee, args } => {
             match &**callee {
-                Expression::Ident(n) => {
+                Expression::Ident(_n) => {
                     // try find in current module - unknown so Any
                     Ok(Type::Any)
                 }
                 Expression::ModuleAccess { module, name } => {
                     if let Some(ms) = modules.get(module) {
-                        if let Some((params, ret)) = ms.get(name) {
+                        if let Some((_params, ret)) = ms.get(name) {
                             return Ok(ret.clone());
                         }
                     }
@@ -149,6 +149,5 @@ fn infer_expr_type(
         Expression::ModuleAccess { .. } => Ok(Type::Any),
         Expression::ListLiteral(_) => Ok(Type::List(Box::new(Type::Any))),
         Expression::MapLiteral(_) => Ok(Type::Map),
-        Expression::PatternMap(_) => Ok(Type::Map),
     }
 }

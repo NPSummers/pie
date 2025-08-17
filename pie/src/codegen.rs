@@ -293,7 +293,6 @@ impl<'ctx> CodeGen<'ctx> {
                     has_return = true;
                     break;
                 }
-                _ => {}
             }
         }
 
@@ -596,20 +595,5 @@ impl<'ctx> CodeGen<'ctx> {
             }
             _ => None,
         }
-    }
-
-    fn find_main_function<'a>(&self, prog: &'a Program) -> Option<&'a Function> {
-        for item in &prog.items {
-            if let Item::Module(m) = item {
-                for mi in &m.items {
-                    if let ModuleItem::Function(f) = mi {
-                        if f.name == "main" && f.public {
-                            return Some(f);
-                        }
-                    }
-                }
-            }
-        }
-        None
     }
 }

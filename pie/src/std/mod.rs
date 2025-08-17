@@ -55,8 +55,4 @@ impl<'ctx> StdLib<'ctx> {
 
         stdlib
     }
-
-    pub fn get_function(&self, name: &str) -> Option<&FunctionValue<'ctx>> {
-        self.functions.get(name)
-    }
 }

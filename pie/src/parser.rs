@@ -530,7 +530,6 @@ pub fn parse(src: &str) -> Result<Program, String> {
                     }
                     eat(&toks, &mut i, "}")?;
                     mod_items.push(ModuleItem::Function(Function {
-                        public: is_public,
                         name: fname,
                         params,
                         ret,
@@ -710,7 +709,6 @@ pub fn parse(src: &str) -> Result<Program, String> {
 
             // Add to main items
             let func = Function {
-                public: is_public,
                 name: fname,
                 params,
                 ret,

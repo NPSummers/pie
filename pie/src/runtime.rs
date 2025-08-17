@@ -77,7 +77,7 @@ pub extern "C" fn pie_dec_ref(p: *mut GcBox) {
                 ValueKind::Str(_) | ValueKind::Int(_) => {}
             }
             // drop box
-            Box::from_raw(p);
+            let _ = Box::from_raw(p);
         }
     }
 }
