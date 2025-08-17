@@ -1,22 +1,23 @@
+#![allow(dead_code)]
 mod ast;
 mod codegen;
 mod parser;
+mod piestd;
 mod runtime;
-mod std;
 mod typecheck;
 
-use ::std::env;
-use ::std::fs;
 use inkwell::context::Context;
 use inkwell::execution_engine::JitFunction;
 use inkwell::OptimizationLevel;
+use std::env;
+use std::fs;
 
 fn main() -> anyhow::Result<()> {
     // Get file path from command line arguments
     let args: Vec<String> = env::args().collect();
     if args.len() != 2 {
         eprintln!("Usage: {} <file.pie>", args[0]);
-        ::std::process::exit(1);
+        std::process::exit(1);
     }
 
     let file_path = &args[1];
@@ -32,7 +33,7 @@ fn main() -> anyhow::Result<()> {
     let mut cg = codegen::CodeGen::new(&context, "pie_module");
 
     // Initialize standard library
-    let stdlib = std::StdLib::new(&context);
+    let stdlib = piestd::StdLib::new(&context);
 
     cg.compile_program(&prog, &stdlib)
         .map_err(|e| anyhow::anyhow!("compilation error: {}", e))?;

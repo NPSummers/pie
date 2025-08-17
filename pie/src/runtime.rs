@@ -3,7 +3,6 @@ use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use std::ptr;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use ureq;
 
 #[derive(Debug)]
 pub enum ValueKind {
@@ -127,12 +126,9 @@ pub extern "C" fn pie_list_push(list: *mut GcBox, val: *mut GcBox) {
         return;
     }
     unsafe {
-        match &mut (*list).kind {
-            ValueKind::List(v) => {
-                pie_inc_ref(val);
-                v.push(val);
-            }
-            _ => {}
+        if let ValueKind::List(v) = &mut (*list).kind {
+            pie_inc_ref(val);
+            v.push(val);
         }
     }
 }
@@ -156,14 +152,11 @@ pub extern "C" fn pie_map_set(map: *mut GcBox, key: *mut GcBox, val: *mut GcBox)
         }
     };
     unsafe {
-        match &mut (*map).kind {
-            ValueKind::Map(m) => {
-                if let Some(old) = m.insert(k, val) {
-                    pie_dec_ref(old);
-                }
-                pie_inc_ref(val);
+        if let ValueKind::Map(m) = &mut (*map).kind {
+            if let Some(old) = m.insert(k, val) {
+                pie_dec_ref(old);
             }
-            _ => {}
+            pie_inc_ref(val);
         }
     }
 }

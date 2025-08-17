@@ -117,7 +117,7 @@ fn infer_expr_type(
             }
             Ok(Type::Any)
         }
-        Expression::Call { callee, args } => {
+        Expression::Call { callee, .. } => {
             match &**callee {
                 Expression::Ident(_n) => {
                     // try find in current module - unknown so Any
