@@ -14,17 +14,17 @@ use std::fs;
 
 fn main() -> anyhow::Result<()> {
     // Get file path from command line arguments
-    let args: Vec<String> = env::args().collect();
-    if args.len() != 2 {
-        eprintln!("Usage: {} <file.pie>", args[0]);
+    let mut args = env::args().skip(1);
+    let [Some(file_path), None] = core::array::from_fn(|_| args.next()) else {
+        eprintln!("Usage: {} <file.pie>", env::args().next().unwrap());
         std::process::exit(1);
-    }
-
-    let file_path = &args[1];
-    let src = fs::read_to_string(file_path)
-        .map_err(|e| anyhow::anyhow!("failed to read file {}: {}", file_path, e))?;
+    };
+    let src = fs::read_to_string(&file_path)
+        .map_err(|e| anyhow::anyhow!("failed to read file {file_path}: {}", e))?;
 
     let prog = parser::parse(&src).map_err(|e| anyhow::anyhow!("parse error: {}", e))?;
+
+    println!("{prog:#?}");
 
     typecheck::typecheck(&prog).map_err(|e| anyhow::anyhow!("type error: {}", e))?;
 
@@ -37,6 +37,10 @@ fn main() -> anyhow::Result<()> {
 
     cg.compile_program(&prog, &stdlib)
         .map_err(|e| anyhow::anyhow!("compilation error: {}", e))?;
+
+    cg.module.print_to_stderr();
+
+    // todo!();
 
     // JIT compile and execute
     let ee = cg
