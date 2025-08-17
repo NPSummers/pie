@@ -14,7 +14,7 @@ fn tokenize(src: &str) -> Vec<Tok> {
             continue;
         }
         if c == '#' {
-            while let Some(d) = chars.next() {
+            for d in chars.by_ref() {
                 if d == '\n' {
                     break;
                 }
@@ -50,7 +50,7 @@ fn tokenize(src: &str) -> Vec<Tok> {
         if c == '"' {
             chars.next();
             let mut s = String::new();
-            while let Some(d) = chars.next() {
+            for d in chars.by_ref() {
                 if d == '"' {
                     break;
                 }
@@ -89,10 +89,10 @@ fn tokenize(src: &str) -> Vec<Tok> {
 }
 
 // parser helpers
-fn peek(toks: &Vec<Tok>, i: usize) -> Option<&str> {
+fn peek(toks: &[Tok], i: usize) -> Option<&str> {
     toks.get(i).map(|t| t.text.as_str())
 }
-fn eat(toks: &Vec<Tok>, i: &mut usize, expected: &str) -> Result<(), String> {
+fn eat(toks: &[Tok], i: &mut usize, expected: &str) -> Result<(), String> {
     if let Some(s) = peek(toks, *i) {
         if s == expected {
             *i += 1;
@@ -273,16 +273,11 @@ fn parse_binary_op_rhs(
     expr_prec: i32,
     mut lhs: Expression,
 ) -> Result<Expression, String> {
-    loop {
-        let op = if let Some(op) = peek(toks, *i) {
-            if op.len() == 1 && "+-*/".contains(op) {
-                op.chars().next().unwrap()
-            } else {
-                break;
-            }
-        } else {
+    while let Some(op) = peek(toks, *i) {
+        if op.len() != 1 || !"+-*/".contains(op) {
             break;
         };
+        let op = op.chars().next().unwrap();
         let prec = if op == '+' || op == '-' { 10 } else { 20 };
         if prec < expr_prec {
             break;
@@ -327,7 +322,7 @@ pub fn parse(src: &str) -> Result<Program, String> {
     let mut i = 0usize;
     let mut items = Vec::new();
     let mut main_items = Vec::new();
-    let mut has_std_import = false;
+    let has_std_import;
     let mut has_main_function = false;
 
     // First, check for required std import

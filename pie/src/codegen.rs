@@ -1,5 +1,5 @@
 use crate::ast::*;
-use crate::std::StdLib;
+use crate::piestd::StdLib;
 use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::module::Module as LlvmModule;
@@ -147,18 +147,12 @@ impl<'ctx> CodeGen<'ctx> {
         // choose return type based on function declaration
         let fn_type = if matches!(func.ret, TypeName::Void) {
             self.context.void_type().fn_type(
-                &param_types
-                    .iter()
-                    .map(|t| t.clone().into())
-                    .collect::<Vec<_>>(),
+                &param_types.iter().map(|t| (*t).into()).collect::<Vec<_>>(),
                 false,
             )
         } else {
             i8ptr_type.fn_type(
-                &param_types
-                    .iter()
-                    .map(|t| t.clone().into())
-                    .collect::<Vec<_>>(),
+                &param_types.iter().map(|t| (*t).into()).collect::<Vec<_>>(),
                 false,
             )
         };
@@ -176,7 +170,7 @@ impl<'ctx> CodeGen<'ctx> {
         for (idx, (_t, pname)) in func.params.iter().enumerate() {
             let alloca = self
                 .builder
-                .build_alloca(i8ptr_type, &pname)
+                .build_alloca(i8ptr_type, pname)
                 .expect("alloca");
             let param = fnv.get_nth_param(idx as u32).unwrap();
             let _ = self.builder.build_store(alloca, param);
@@ -193,10 +187,7 @@ impl<'ctx> CodeGen<'ctx> {
                     expr,
                 } => {
                     if let Some(val) = self.codegen_expr(expr, &locals) {
-                        let alloca = self
-                            .builder
-                            .build_alloca(i8ptr_type, &name)
-                            .expect("alloca");
+                        let alloca = self.builder.build_alloca(i8ptr_type, name).expect("alloca");
                         let _ = self.builder.build_store(alloca, val);
                         locals.insert(name.clone(), alloca);
                     }
@@ -326,7 +317,7 @@ impl<'ctx> CodeGen<'ctx> {
             Expression::Str(s) => {
                 let gv = self
                     .builder
-                    .build_global_string_ptr(&s, "gstr")
+                    .build_global_string_ptr(s, "gstr")
                     .expect("gstr");
                 let ptr = gv.as_pointer_value();
                 let fn_new_str = self.module.get_function("pie_new_string").unwrap();
@@ -349,14 +340,8 @@ impl<'ctx> CodeGen<'ctx> {
             }
             Expression::Binary(lhs, op, rhs) => {
                 // evaluate both sides
-                let left_val = match self.codegen_expr(lhs, locals) {
-                    Some(v) => v,
-                    None => return None,
-                };
-                let right_val = match self.codegen_expr(rhs, locals) {
-                    Some(v) => v,
-                    None => return None,
-                };
+                let left_val = self.codegen_expr(lhs, locals)?;
+                let right_val = self.codegen_expr(rhs, locals)?;
 
                 let fn_name = match op {
                     '+' => "pie_add",
@@ -477,7 +462,7 @@ impl<'ctx> CodeGen<'ctx> {
                                 // expects (key, val) -> call pie_map_set(map, key, val)
                                 let mut compiled_args = Vec::new();
                                 compiled_args.push(loaded.into());
-                                if args.len() >= 1 {
+                                if !args.is_empty() {
                                     if let Some(a0) = self.codegen_expr(&args[0], locals) {
                                         compiled_args.push(a0.into());
                                     } else {
@@ -505,7 +490,7 @@ impl<'ctx> CodeGen<'ctx> {
                             if name == "get" {
                                 let mut compiled_args = Vec::new();
                                 compiled_args.push(loaded.into());
-                                if args.len() >= 1 {
+                                if !args.is_empty() {
                                     if let Some(a0) = self.codegen_expr(&args[0], locals) {
                                         compiled_args.push(a0.into());
                                     } else {
@@ -528,7 +513,7 @@ impl<'ctx> CodeGen<'ctx> {
                             if name == "push" {
                                 let mut compiled_args = Vec::new();
                                 compiled_args.push(loaded.into());
-                                if args.len() >= 1 {
+                                if !args.is_empty() {
                                     if let Some(a0) = self.codegen_expr(&args[0], locals) {
                                         compiled_args.push(a0.into());
                                     } else {
