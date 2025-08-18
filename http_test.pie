@@ -1,8 +1,8 @@
 use pie/std;
 
-public def void main() {
+def void main() {
     let map h = std::map_new();
-    h.set(h, "X-Api-Key", "GWnggJ8q51xCnqzIm3IgFQ==0x26Fe9f7ZvWD2xN");
+    std::map::set(h, "X-Api-Key", "GWnggJ8q51xCnqzIm3IgFQ==0x26Fe9f7ZvWD2xN");
     let string body = std::http_get("https://api.api-ninjas.com/v1/quotes", h);
     std::print("body: ", body);
 }

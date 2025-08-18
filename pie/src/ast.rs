@@ -1,79 +1,134 @@
+use std::borrow::Cow;
+
 #[derive(Debug, Clone, PartialEq)]
-pub enum TypeName {
+pub enum TypeName<'s> {
     Int,
+    Float,
     String,
-    List(Box<TypeName>),
+    List,
     Map,
     Void,
-    Custom(String),
+    Custom(&'s str),
+}
+
+impl<'s> From<&'s str> for TypeName<'s> {
+    fn from(value: &'s str) -> Self {
+        match value {
+            "void" => TypeName::Void,
+            "string" => TypeName::String,
+            "int" => TypeName::Int,
+            "float" => TypeName::Float,
+            "map" => TypeName::Map,
+            "list" => TypeName::List,
+            custom => TypeName::Custom(custom),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
-pub struct Program {
-    pub items: Vec<Item>,
+pub struct Program<'s> {
+    pub items: Vec<Item<'s>>,
 }
 
 #[derive(Debug, Clone)]
-pub enum Item {
-    Use(String),
-    Module(Module),
-    TopStatement(Statement),
+pub enum Item<'s> {
+    Use(Vec<&'s str>),
+    Module(Module<'s>),
+    TopStatement(Statement<'s>),
 }
 
 #[derive(Debug, Clone)]
-pub struct Module {
-    pub name: String,
-    pub items: Vec<ModuleItem>,
+pub struct Module<'s> {
+    pub name: &'s str,
+    pub items: Vec<ModuleItem<'s>>,
 }
 
 #[derive(Debug, Clone)]
-pub enum ModuleItem {
+pub enum ModuleItem<'s> {
     Let {
-        typ: TypeName,
-        name: String,
-        expr: Expression,
+        typ: TypeName<'s>,
+        name: &'s str,
+        expr: Expression<'s>,
     },
-    Function(Function),
+    Function(Function<'s>),
+    Module(Module<'s>),
 }
 
 #[derive(Debug, Clone)]
-pub struct Function {
-    pub name: String,
-    pub params: Vec<(TypeName, String)>,
-    pub ret: TypeName,
-    pub body: Vec<Statement>,
+pub struct Function<'s> {
+    pub name: &'s str,
+    pub params: Vec<(TypeName<'s>, &'s str)>,
+    pub ret: TypeName<'s>,
+    pub body: Vec<Statement<'s>>,
 }
 
 #[derive(Debug, Clone)]
-pub enum Statement {
+pub enum AssignOp {
+    Assign,
+    Plus,
+    Minus,
+    Star,
+    Slash,
+}
+
+#[derive(Debug, Clone)]
+pub enum Statement<'s> {
     Let {
-        typ: TypeName,
-        name: String,
-        expr: Expression,
+        typ: TypeName<'s>,
+        name: &'s str,
+        expr: Expression<'s>,
     },
-    Expr(Expression),
-    Return(Option<Expression>),
+    Expr(Expression<'s>),
+    Return(Option<Expression<'s>>),
     Assignment {
-        target: Expression,
-        op: String,
-        value: Expression,
+        target: Expression<'s>,
+        op: AssignOp,
+        value: Expression<'s>,
     },
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum BinaryOp {
+    Mul,
+    Div,
+    Add,
+    Sub,
+}
+
+impl BinaryOp {
+    pub fn precedence(&self) -> u16 {
+        use BinaryOp::*;
+        match self {
+            Add | Sub => 10,
+            Mul | Div => 20,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum UnaryOp {
+    Add,
+    Sub,
+    Not,
+}
+
 #[derive(Debug, Clone)]
-pub enum Expression {
+pub enum Expression<'s> {
     Int(i64),
-    Str(String),
-    Ident(String),
-    Binary(Box<Expression>, char, Box<Expression>),
+    Str(Cow<'s, str>),
+    Ident(&'s str),
+    Binary(Box<Expression<'s>>, BinaryOp, Box<Expression<'s>>),
+    Unary(UnaryOp, Box<Expression<'s>>),
     Call {
-        callee: Box<Expression>,
-        args: Vec<Expression>,
+        callee: Box<Expression<'s>>,
+        args: Vec<Expression<'s>>,
     },
     ModuleAccess {
-        module: String,
-        name: String,
+        components: Vec<&'s str>,
     },
-    ListLiteral(Vec<Expression>),
-    MapLiteral(Vec<(String, Expression)>),
+    MemberAccess {
+        components: Vec<&'s str>,
+    },
+    ListLiteral(Vec<Expression<'s>>),
+    MapLiteral(Vec<(Expression<'s>, Expression<'s>)>),
 }

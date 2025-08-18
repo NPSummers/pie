@@ -2,56 +2,36 @@ use inkwell::context::Context;
 use inkwell::values::FunctionValue;
 use std::collections::HashMap;
 
+use crate::piestd::builtins::{Registry, StdFunction};
+
+pub mod builtins;
+pub mod llvmtypes;
+
 pub struct StdLib<'ctx> {
     pub functions: HashMap<String, FunctionValue<'ctx>>,
+    pub registry: Registry<'ctx>,
 }
 
 impl<'ctx> StdLib<'ctx> {
     pub fn new(context: &'ctx Context) -> Self {
+        let mut registry = Registry::new(context);
+        registry.register_builtins();
+
         let mut stdlib = StdLib {
             functions: HashMap::new(),
+            registry,
         };
 
         // Create a temporary module for std functions
         let module = context.create_module("std");
 
-        // Add print function
-        let i8_ptr_type = context
-            .i8_type()
-            .ptr_type(inkwell::AddressSpace::from(0u16));
-        let print_type = i8_ptr_type.fn_type(&[], false);
-        let print_fn = module.add_function("printf", print_type, None);
-        stdlib.functions.insert("print".to_string(), print_fn);
-
-        // Add to_string function
-        let i64_type = context.i64_type();
-        let to_string_type = i64_type.fn_type(&[], false);
-        let to_string_fn = module.add_function("to_string", to_string_type, None);
-        stdlib
-            .functions
-            .insert("to_string".to_string(), to_string_fn);
-
-        // Add arithmetic functions
-        let add_type = i8_ptr_type.fn_type(&[i8_ptr_type.into(), i8_ptr_type.into()], false);
-        let add_fn = module.add_function("pie_add", add_type, None);
-        stdlib.functions.insert("pie_add".to_string(), add_fn);
-
-        let sub_type = i8_ptr_type.fn_type(&[i8_ptr_type.into(), i8_ptr_type.into()], false);
-        let sub_fn = module.add_function("pie_sub", sub_type, None);
-        stdlib.functions.insert("pie_sub".to_string(), sub_fn);
-
-        let mul_type = i8_ptr_type.fn_type(&[i8_ptr_type.into(), i8_ptr_type.into()], false);
-        let mul_fn = module.add_function("pie_mul", mul_type, None);
-        stdlib.functions.insert("pie_mul".to_string(), mul_fn);
-
-        let div_type = i8_ptr_type.fn_type(&[i8_ptr_type.into(), i8_ptr_type.into()], false);
-        let div_fn = module.add_function("pie_div", div_type, None);
-        stdlib.functions.insert("pie_div".to_string(), div_fn);
-
-        // Add http_get backed by the runtime pie_http_get
-        let http_get_type = i8_ptr_type.fn_type(&[i8_ptr_type.into(), i8_ptr_type.into()], false);
-        let http_get_fn = module.add_function("pie_http_get", http_get_type, None);
-        stdlib.functions.insert("http_get".to_string(), http_get_fn);
+        for func in stdlib.registry.functions() {
+            let fn_type = func.func_type;
+            let function = module.add_function(func.native_name, fn_type, None);
+            stdlib
+                .functions
+                .insert(func.native_name.to_string(), function);
+        }
 
         stdlib
     }

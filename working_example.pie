@@ -12,10 +12,11 @@ module demo {
     }
 }
 
-public def void main() {
+def void main() {
     let int answer = demo::get_answer();
     std::print(answer);
     
     let int meaning = demo::get_meaning();
     std::print(meaning);
+    std::print("foo");
 }
