@@ -115,6 +115,7 @@ pub enum UnaryOp {
 #[derive(Debug, Clone)]
 pub enum Expression<'s> {
     Int(i64),
+    Float(f64),
     Str(Cow<'s, str>),
     Ident(&'s str),
     Binary(Box<Expression<'s>>, BinaryOp, Box<Expression<'s>>),

@@ -243,12 +243,21 @@ impl<'ctx> CodeGen<'ctx> {
     ) -> Option<BasicValueEnum<'ctx>> {
         let ptr_type = self.context.ptr_type(AddressSpace::from(0u16));
         match expr {
-            Expression::Int(i) => {
+            &Expression::Int(i) => {
                 let fn_int_new = self.module.get_function("pie_int_new").unwrap();
-                let cv = self.context.i64_type().const_int(*i as u64, true);
+                let cv = self.context.i64_type().const_int(i as u64, true);
                 let call = self
                     .builder
                     .build_call(fn_int_new, &[cv.into()], "newint")
+                    .expect("call");
+                Some(call.try_as_basic_value().left().unwrap())
+            }
+            &Expression::Float(f) => {
+                let fn_float_new = self.module.get_function("pie_float_new").unwrap();
+                let cv = self.context.f64_type().const_float(f);
+                let call = self
+                    .builder
+                    .build_call(fn_float_new, &[cv.into()], "newfloat")
                     .expect("call");
                 Some(call.try_as_basic_value().left().unwrap())
             }

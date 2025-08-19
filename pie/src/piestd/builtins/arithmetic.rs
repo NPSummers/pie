@@ -4,18 +4,33 @@ use crate::{
 };
 
 pub fn register(reg: &mut Registry) {
+    pie_int_new_register(reg);
+    pie_float_new_register(reg);
+
     pie_add_register(reg);
     pie_sub_register(reg);
     pie_mul_register(reg);
     pie_div_register(reg);
 }
 
+pie_native_fn!(pie_int_new(v: i64) -> GcBox {
+    v.into()
+});
+
+pie_native_fn!(pie_float_new(v: f64) -> GcBox {
+    v.into()
+});
+
 pie_native_fn!(pie_add(a: GcRef, b: GcRef) -> Option<GcBox> {
     use Value::*;
     Some(match (&*a.0.borrow(), &*b.0.borrow()) {
         (Int(a), Int(b)) => (a + b).into(),
-        (Str(a), Str(b)) => format!("{a}{b}").into(),
-        _ => return None,
+        (Str(a), b) => format!("{a}{b}").into(),
+        (a, Str(b)) => format!("{a}{b}").into(),
+        (Float(a), Float(b)) => (a + b).into(),
+        (Float(a), &Int(b)) => (a + b as f64).into(),
+        (&Int(a), Float(b)) => (a as f64 + b).into(),
+        _ => return None
     })
 });
 
@@ -23,6 +38,9 @@ pie_native_fn!(pie_sub(a: GcRef, b: GcRef) -> Option<GcBox> {
     use Value::*;
     Some(match (&*a.0.borrow(), &*b.0.borrow()) {
         (Int(a), Int(b)) => (a - b).into(),
+        (Float(a), Float(b)) => (a - b).into(),
+        (&Int(a), Float(b)) => (a as f64 - b).into(),
+        (Float(a), &Int(b)) => (a - b as f64).into(),
         _ => return None,
     })
 });
@@ -31,6 +49,9 @@ pie_native_fn!(pie_mul(a: GcRef, b: GcRef) -> Option<GcBox> {
     use Value::*;
     Some(match (&*a.0.borrow(), &*b.0.borrow()) {
         (Int(a), Int(b)) => (a * b).into(),
+        (Float(a), Float(b)) => (a * b).into(),
+        (&Int(a), Float(b)) => (a as f64 * b).into(),
+        (Float(a), &Int(b)) => (a * b as f64).into(),
         _ => return None,
     })
 });
@@ -40,6 +61,9 @@ pie_native_fn!(pie_div(a: GcRef, b: GcRef) -> Option<GcBox> {
     Some(match (&*a.0.borrow(), &*b.0.borrow()) {
         (_, Int(0)) => return None,
         (Int(a), Int(b)) => (a / b).into(),
+        (Float(a), Float(b)) => (a / b).into(),
+        (&Int(a), Float(b)) => (a as f64 / b).into(),
+        (Float(a), &Int(b)) => (a / b as f64).into(),
         _ => return None,
     })
 });

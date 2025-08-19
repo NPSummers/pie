@@ -8,6 +8,7 @@ use std::rc::Rc;
 #[derive(Debug)]
 pub enum Value {
     Int(i64),
+    Float(f64),
     Str(String),
     List(Vec<GcBox>),
     Map(HashMap<String, GcBox>),
@@ -18,6 +19,7 @@ impl Display for Value {
         use Value::*;
         match self {
             Int(v) => write!(f, "{v}"),
+            Float(v) => write!(f, "{v}"),
             Str(s) => write!(f, "{s}"),
             List(l) => {
                 write!(f, "[")?;
@@ -81,6 +83,12 @@ impl From<&str> for GcBox {
 impl From<i64> for GcBox {
     fn from(value: i64) -> Self {
         GcBox::new(Value::Int(value))
+    }
+}
+
+impl From<f64> for GcBox {
+    fn from(value: f64) -> Self {
+        GcBox::new(Value::Float(value))
     }
 }
 

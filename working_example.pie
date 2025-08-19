@@ -19,4 +19,5 @@ def void main() {
     let int meaning = demo::get_meaning();
     std::print(meaning);
     std::print("foo");
+    std::print(2.5 + 2.0);
 }

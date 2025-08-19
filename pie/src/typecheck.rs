@@ -268,5 +268,6 @@ fn infer_expr_type<'s>(
         Expression::MemberAccess { .. } => Ok(Type::Any),
         // TODO: Account for unary ops affecting the type
         Expression::Unary(_op, expr) => infer_expr_type(expr, env, module_fns),
+        Expression::Float(_) => Ok(Type::Float),
     }
 }

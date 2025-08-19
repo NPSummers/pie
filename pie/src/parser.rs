@@ -79,6 +79,7 @@ impl<'s> Parser<'s> {
         match first {
             Token::StringLit(s) => Ok(Expression::Str(s)),
             Token::IntLit(i) => Ok(Expression::Int(i)),
+            Token::FloatLit(f) => Ok(Expression::Float(f)),
             // function call
             tok @ Token::Ident(_) | tok @ Token::ModuleAccess(_) | tok @ Token::MemberAccess(_)
                 if self.consume_if(|t| matches!(t, Token::LParen)) =>

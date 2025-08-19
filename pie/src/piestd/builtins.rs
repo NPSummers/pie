@@ -7,7 +7,6 @@ use inkwell::{
     AddressSpace,
 };
 mod arithmetic;
-mod int;
 mod io;
 mod list;
 mod map;
@@ -163,7 +162,6 @@ impl<'ctx> Registry<'ctx> {
         arithmetic::register(self);
         map::register(self);
         list::register(self);
-        int::register(self);
         io::register(self);
     }
     pub fn functions(&self) -> impl Iterator<Item = &NativeFunction<'ctx>> {
