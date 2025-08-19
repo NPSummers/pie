@@ -20,3 +20,6 @@ Contributions are welcome, but please make sure you clarify with me before submi
 ## License
 
 Pie is distributed under the [MIT](./LICENSE) license.
+
+### Contributors
+The project is owned by @NPSummers, and has had extensive contributions from @CordlessCoder.
