@@ -92,20 +92,247 @@ pub fn walk_items<'s, S>(
     state
 }
 
-fn check_fn(modules: &ModuleTree<'_>, path: &[&str], func: &Function<'_>) -> Result<(), String> {
-    // TODO: typecheck
+fn check_fn<'s>(
+    modules: &ModuleTree<'s>,
+    path: &[&'s str],
+    func: &Function<'s>,
+) -> Result<(), String> {
+    let mut locals: HashMap<&'s str, Type> = HashMap::new();
+    for (t, name) in &func.params {
+        locals.insert(*name, t.into());
+    }
+
+    let mut saw_return = false;
+    for stmt in &func.body {
+        if matches!(stmt, Statement::Return(_)) {
+            saw_return = true;
+        }
+        check_stmt(modules, path, &mut locals, &func.ret, stmt)?;
+    }
+    if func.ret != TypeName::Void && !saw_return {
+        return Err(format!(
+            "missing return in function expected {:?}",
+            Type::from(&func.ret)
+        ));
+    }
     Ok(())
 }
 
-fn check_let(
-    modules: &ModuleTree<'_>,
-    path: &[&str],
+fn check_let<'s>(
+    modules: &ModuleTree<'s>,
+    path: &[&'s str],
     name: &str,
     typ: Type,
-    expr: &Expression<'_>,
+    expr: &Expression<'s>,
 ) -> Result<(), String> {
-    // TODO: typecheck
+    let locals: HashMap<&'s str, Type> = HashMap::new();
+    let et = infer_expr_type(expr, &locals, modules, path)?;
+    if typ != Type::Any && et != Type::Any && typ != et {
+        return Err(format!(
+            "type mismatch for let {}: declared {:?} but expr is {:?}",
+            name, typ, et
+        ));
+    }
     Ok(())
+}
+
+fn check_stmt<'s>(
+    modules: &ModuleTree<'s>,
+    path: &[&'s str],
+    locals: &mut HashMap<&'s str, Type>,
+    func_ret: &TypeName<'s>,
+    stmt: &Statement<'s>,
+) -> Result<(), String> {
+    match stmt {
+        Statement::Let { typ, name, expr } => {
+            let declared: Type = typ.into();
+            let et = infer_expr_type(expr, locals, modules, path)?;
+            if declared != Type::Any && et != Type::Any && declared != et {
+                return Err(format!(
+                    "type mismatch for let {}: declared {:?} but expr is {:?}",
+                    name, declared, et
+                ));
+            }
+            locals.insert(*name, declared);
+            Ok(())
+        }
+        Statement::Assignment { target, op, value } => {
+            let (var_name, var_type) = match target {
+                Expression::Ident(name) => {
+                    let Some(vt) = locals.get(name).cloned() else {
+                        return Err(format!("assignment to undefined variable '{name}'"));
+                    };
+                    (*name, vt)
+                }
+                _ => return Ok(()),
+            };
+            let vt = var_type;
+            let val_t = infer_expr_type(value, locals, modules, path)?;
+            let result_t = match op {
+                AssignOp::Assign => val_t.clone(),
+                AssignOp::Plus => binary_result_type(BinaryOp::Add, &vt, &val_t),
+                AssignOp::Minus => binary_result_type(BinaryOp::Sub, &vt, &val_t),
+                AssignOp::Star => binary_result_type(BinaryOp::Mul, &vt, &val_t),
+                AssignOp::Slash => binary_result_type(BinaryOp::Div, &vt, &val_t),
+            };
+            if vt != Type::Any && result_t != Type::Any && vt != result_t {
+                return Err(format!(
+                    "type mismatch for assignment to {}: {:?} with value {:?} yields {:?}",
+                    var_name, vt, val_t, result_t
+                ));
+            }
+            Ok(())
+        }
+        Statement::Expr(e) => {
+            let _ = infer_expr_type(e, locals, modules, path)?;
+            Ok(())
+        }
+        Statement::Return(Some(e)) => {
+            let et = infer_expr_type(e, locals, modules, path)?;
+            let rt: Type = func_ret.into();
+            if rt != Type::Any && et != Type::Any && rt != et {
+                return Err(format!(
+                    "return type mismatch: expected {:?}, got {:?}",
+                    rt, et
+                ));
+            }
+            Ok(())
+        }
+        Statement::Return(None) => {
+            if *func_ret != TypeName::Void {
+                return Err(format!(
+                    "missing return in function expected {:?}",
+                    Type::from(func_ret)
+                ));
+            }
+            Ok(())
+        }
+    }
+}
+
+fn binary_result_type(op: BinaryOp, lhs: &Type, rhs: &Type) -> Type {
+    use BinaryOp::*;
+    match op {
+        Add => {
+            if *lhs == Type::String || *rhs == Type::String {
+                return Type::String;
+            }
+            if *lhs == Type::Float || *rhs == Type::Float {
+                return Type::Float;
+            }
+            if *lhs == Type::Int && *rhs == Type::Int {
+                return Type::Int;
+            }
+            Type::Any
+        }
+        Sub | Mul | Div => {
+            if *lhs == Type::Float || *rhs == Type::Float {
+                return Type::Float;
+            }
+            if *lhs == Type::Int && *rhs == Type::Int {
+                return Type::Int;
+            }
+            Type::Any
+        }
+    }
+}
+
+fn infer_expr_type<'s>(
+    expr: &Expression<'s>,
+    locals: &HashMap<&'s str, Type>,
+    modules: &ModuleTree<'s>,
+    path: &[&'s str],
+) -> Result<Type, String> {
+    Ok(match expr {
+        Expression::Int(_) => Type::Int,
+        Expression::Float(_) => Type::Float,
+        Expression::Bool(_) => Type::Bool,
+        Expression::Str(_) => Type::String,
+        Expression::Ident(name) => {
+            if let Some(t) = locals.get(name) {
+                t.clone()
+            } else if let Some(t) = modules.get(path.iter().copied().chain([*name])) {
+                match t {
+                    Type::Function(_, _) => return Err(format!("undefined variable '{name}'")),
+                    other => other,
+                }
+            } else {
+                return Err(format!("undefined variable '{name}'"));
+            }
+        }
+        Expression::ModuleAccess { components } => {
+            if let Some(t) = modules.get(components.iter().copied()) {
+                t
+            } else {
+                let qualified = components.join("::");
+                return Err(format!("unresolved name '{qualified}'"));
+            }
+        }
+        Expression::MemberAccess { .. } => Type::Any,
+        Expression::Binary(lhs, op, rhs) => {
+            let lt = infer_expr_type(lhs, locals, modules, path)?;
+            let rt = infer_expr_type(rhs, locals, modules, path)?;
+            binary_result_type(op.clone(), &lt, &rt)
+        }
+        Expression::Unary(op, e) => {
+            let et = infer_expr_type(e, locals, modules, path)?;
+            match op {
+                UnaryOp::Not => Type::Bool,
+                UnaryOp::Add | UnaryOp::Sub => {
+                    if et == Type::Float {
+                        Type::Float
+                    } else if et == Type::Int {
+                        Type::Int
+                    } else {
+                        Type::Any
+                    }
+                }
+            }
+        }
+        Expression::Call { callee, args } => {
+            let (params, ret) = match &**callee {
+                Expression::Ident(n) => {
+                    if let Some(Type::Function(p, r)) =
+                        modules.get(path.iter().copied().chain([*n]))
+                    {
+                        (p, r)
+                    } else {
+                        return Err(format!("unknown function '{n}'"));
+                    }
+                }
+                Expression::ModuleAccess { components } => {
+                    if let Some(Type::Function(p, r)) = modules.get(components.iter().copied()) {
+                        (p, r)
+                    } else {
+                        let q = components.join("::");
+                        return Err(format!("unknown function '{q}'"));
+                    }
+                }
+                _ => return Ok(Type::Any),
+            };
+            if params.len() != args.len() {
+                return Err(format!(
+                    "argument count mismatch: expected {}, got {}",
+                    params.len(),
+                    args.len()
+                ));
+            }
+            for (i, (pt, a)) in params.iter().zip(args.iter()).enumerate() {
+                let at = infer_expr_type(a, locals, modules, path)?;
+                if *pt != Type::Any && at != Type::Any && *pt != at {
+                    return Err(format!(
+                        "argument {} type mismatch: expected {:?}, got {:?}",
+                        i + 1,
+                        pt,
+                        at
+                    ));
+                }
+            }
+            (*ret).clone()
+        }
+        Expression::ListLiteral(_) => Type::List,
+        Expression::MapLiteral(_) => Type::Map,
+    })
 }
 
 pub fn typecheck(registry: &Registry<'_>, prog: &Program<'_>) -> Result<(), String> {
@@ -176,101 +403,7 @@ pub fn typecheck(registry: &Registry<'_>, prog: &Program<'_>) -> Result<(), Stri
         if let Some(err) = err {
             return Err(err);
         }
-        // let _sigs = module_fns.get(&m.name).unwrap();
-        // for mi in &m.items {
-        //     if let ModuleItem::Function(f) = mi {
-        //         // build local env: params
-        //         let mut env: HashMap<&str, Type> = HashMap::new();
-        //         for (t, name) in &f.params {
-        //             env.insert(name, t.into());
-        //         }
-        //         // check statements
-        //         for stmt in &f.body {
-        //             match stmt {
-        //                 Statement::Let { typ, name, expr } => {
-        //                     let et = infer_expr_type(expr, &env, &module_fns)?;
-        //                     let declared = typ.into();
-        //                     if declared != Type::Any && declared != et {
-        //                         return Err(format!(
-        //                             "type mismatch for let {}: declared {:?} but expr is {:?}",
-        //                             name, declared, et
-        //                         ));
-        //                     }
-        //                     env.insert(name, declared);
-        //                 }
-        //                 Statement::Expr(e) => {
-        //                     let _ = infer_expr_type(e, &env, &module_fns)?;
-        //                 }
-        //                 Statement::Return(Some(e)) => {
-        //                     let et = infer_expr_type(e, &env, &module_fns)?;
-        //                     let ret: Type = (&f.ret).into();
-        //                     if ret != Type::Any && ret != et {
-        //                         return Err(format!(
-        //                             "return type mismatch in {}: expected {:?}, got {:?}",
-        //                             f.name, ret, et
-        //                         ));
-        //                     }
-        //                 }
-        //                 Statement::Return(None) => {
-        //                     let ret: Type = (&f.ret).into();
-        //                     if ret != Type::Void {
-        //                         return Err(format!(
-        //                             "missing return in function expected {ret:?}",
-        //                         ));
-        //                     }
-        //                 }
-        //                 _ => {}
-        //             }
-        //         }
-        //     }
-        // }
     }
 
     Ok(())
-}
-
-fn infer_expr_type<'s>(
-    expr: &Expression<'s>,
-    env: &HashMap<&'s str, Type>,
-    module_fns: &HashMap<Vec<&'s str>, (Vec<Type>, Type)>,
-) -> Result<Type, String> {
-    match expr {
-        Expression::Int(_) => Ok(Type::Int),
-        Expression::Str(_) => Ok(Type::String),
-        Expression::Ident(name) => Ok(env.get(name).cloned().unwrap_or(Type::Any)),
-        Expression::Binary(lhs, op, rhs) => {
-            let lt = infer_expr_type(lhs, env, module_fns)?;
-            let rt = infer_expr_type(rhs, env, module_fns)?;
-            if *op == BinaryOp::Add && (lt == Type::String || rt == Type::String) {
-                return Ok(Type::String);
-            }
-            if lt == Type::Int && rt == Type::Int {
-                return Ok(Type::Int);
-            }
-            Ok(Type::Any)
-        }
-        Expression::Call { callee, .. } => {
-            match &**callee {
-                Expression::Ident(_n) => {
-                    // try find in current module - unknown so Any
-                    Ok(Type::Any)
-                }
-                Expression::ModuleAccess { components } => {
-                    if let Some((_params, ret)) = module_fns.get(components) {
-                        return Ok(ret.clone());
-                    }
-                    Ok(Type::Any)
-                }
-                _ => Ok(Type::Any),
-            }
-        }
-        Expression::ModuleAccess { .. } => Ok(Type::Any),
-        Expression::ListLiteral(_) => Ok(Type::List),
-        Expression::MapLiteral(_) => Ok(Type::Map),
-        Expression::MemberAccess { .. } => Ok(Type::Any),
-        // TODO: Account for unary ops affecting the type
-        Expression::Unary(_op, expr) => infer_expr_type(expr, env, module_fns),
-        Expression::Float(_) => Ok(Type::Float),
-        Expression::Bool(_) => Ok(Type::Bool),
-    }
 }

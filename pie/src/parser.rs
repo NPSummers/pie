@@ -1,4 +1,8 @@
-use crate::{ast::*, lexer::Token};
+use crate::{
+    ast::*,
+    diagnostics::{Diagnostic, ErrorKind},
+    lexer::Token,
+};
 use logos::{Logos, Span};
 use std::ops::Range;
 
@@ -6,21 +10,45 @@ use std::ops::Range;
 pub struct Parser<'t> {
     tokens: Vec<(Token<'t>, Span)>,
     remaining: Range<usize>,
+    source: &'t str,
 }
 
 impl<'t> Parser<'t> {
-    pub fn new(source: &'t str) -> Result<Self, ()> {
-        let tokens: Vec<_> = Token::lexer(source)
-            .spanned()
-            .map(|(tok, r)| tok.map(|t| (t, r)))
-            .collect::<Result<_, ()>>()?;
+    pub fn new(source: &'t str) -> Result<Self, Diagnostic> {
+        let mut tokens: Vec<(Token<'t>, Span)> = Vec::new();
+        for (res, span) in Token::lexer(source).spanned() {
+            match res {
+                Ok(tok) => tokens.push((tok, span)),
+                Err(()) => {
+                    let bad = &source[span.clone()];
+                    return Err(Diagnostic {
+                        kind: ErrorKind::Lex,
+                        message: format!("unexpected token '{}'", bad.escape_default()),
+                        span,
+                    });
+                }
+            }
+        }
         let remaining = 0..tokens.len();
-        Ok(Parser { tokens, remaining })
+        Ok(Parser {
+            tokens,
+            remaining,
+            source,
+        })
     }
     fn remaining(&self) -> &[(Token<'t>, Span)] {
         self.tokens
             .get(self.remaining.clone())
             .expect("remaining range out of bounds for source")
+    }
+    fn current_span(&self) -> Span {
+        if let Some((_, s)) = self.remaining().first() {
+            return s.clone();
+        }
+        if let Some((_, s)) = self.tokens.last() {
+            return s.end..s.end;
+        }
+        0..0
     }
     fn advance(&mut self) -> Option<Token<'t>> {
         if self.remaining.start >= self.tokens.len() {
@@ -28,6 +56,13 @@ impl<'t> Parser<'t> {
         }
         self.remaining.start += 1;
         Some(self.tokens[self.remaining.start - 1].clone().0)
+    }
+    fn last_span(&self) -> Span {
+        if self.remaining.start == 0 {
+            return self.current_span();
+        }
+        let (_, s) = &self.tokens[self.remaining.start - 1];
+        s.clone()
     }
     fn unconsume_one(&mut self) {
         self.remaining.start = self.remaining.start.saturating_sub(1);
@@ -58,7 +93,22 @@ impl<'t> Parser<'t> {
 }
 
 impl<'s> Parser<'s> {
-    fn parse_unary(&mut self) -> Result<Expression<'s>, String> {
+    fn err_here(&self, kind: ErrorKind, msg: impl Into<String>) -> Diagnostic {
+        Diagnostic {
+            kind,
+            message: msg.into(),
+            span: self.current_span(),
+        }
+    }
+    fn err_last(&self, kind: ErrorKind, msg: impl Into<String>) -> Diagnostic {
+        Diagnostic {
+            kind,
+            message: msg.into(),
+            span: self.last_span(),
+        }
+    }
+
+    fn parse_unary(&mut self) -> Result<Expression<'s>, Diagnostic> {
         if let Some(tok) = self.advance_if(|t| matches!(t, Token::Not | Token::Minus | Token::Plus))
         {
             let op = match tok {
@@ -72,9 +122,9 @@ impl<'s> Parser<'s> {
         }
         self.parse_primary()
     }
-    fn parse_primary(&mut self) -> Result<Expression<'s>, String> {
+    fn parse_primary(&mut self) -> Result<Expression<'s>, Diagnostic> {
         let Some(first) = self.advance() else {
-            return Err("expected a token in primary".into());
+            return Err(self.err_here(ErrorKind::Parse, "expected a token in primary"));
         };
         match first {
             Token::StringLit(s) => Ok(Expression::Str(s)),
@@ -98,10 +148,12 @@ impl<'s> Parser<'s> {
                     let arg = self.parse_expression()?;
                     args.push(arg);
                     if !self.consume_if(|t| matches!(t, Token::Comma)) {
-                        assert!(
-                            matches!(self.advance(), Some(Token::RParen)),
-                            "Expected a ) following function call"
-                        );
+                        if !matches!(self.advance(), Some(Token::RParen)) {
+                            return Err(self.err_here(
+                                ErrorKind::Parse,
+                                "expected ')' following function call",
+                            ));
+                        }
                         break;
                     }
                 }
@@ -114,10 +166,9 @@ impl<'s> Parser<'s> {
             Token::Ident(id) => Ok(Expression::Ident(id)),
             Token::LParen => {
                 let expr = self.parse_expression()?;
-                assert!(
-                    matches!(self.advance(), Some(Token::RParen)),
-                    "Expected a ) following group `(expr...`"
-                );
+                if !matches!(self.advance(), Some(Token::RParen)) {
+                    return Err(self.err_here(ErrorKind::Parse, "expected ')' to close group"));
+                }
                 Ok(expr)
             }
             Token::LBracket => {
@@ -127,7 +178,9 @@ impl<'s> Parser<'s> {
                     items.push(val);
                     if !self.consume_if(|t| matches!(t, Token::Comma)) {
                         let Some(Token::RBracket) = self.advance() else {
-                            return Err("Expected a ] following list `[...`".into());
+                            return Err(
+                                self.err_here(ErrorKind::Parse, "expected ']' following list")
+                            );
                         };
                         break;
                     }
@@ -139,20 +192,27 @@ impl<'s> Parser<'s> {
                 while !self.consume_if(|t| matches!(t, Token::RBrace)) {
                     let key = self.parse_expression()?;
                     if !self.consume_if(|t| matches!(t, Token::Colon)) {
-                        return Err("Expected a : following map `{key...`".into());
+                        return Err(
+                            self.err_here(ErrorKind::Parse, "expected ':' following map key")
+                        );
                     }
                     let value = self.parse_expression()?;
                     pairs.push((key, value));
                     if !self.consume_if(|t| matches!(t, Token::Comma)) {
                         let Some(Token::RBrace) = self.advance() else {
-                            return Err("Expected a } following map `{...`".into());
+                            return Err(
+                                self.err_here(ErrorKind::Parse, "expected '}' to close map")
+                            );
                         };
                         break;
                     }
                 }
                 Ok(Expression::MapLiteral(pairs))
             }
-            other => Err(format!("unexpected token in primary: {other:?}")),
+            other => Err(self.err_last(
+                ErrorKind::Parse,
+                format!("unexpected token in primary: {other:?}"),
+            )),
         }
     }
 
@@ -161,7 +221,7 @@ impl<'s> Parser<'s> {
         &mut self,
         expr_prec: u16,
         mut lhs: Expression<'s>,
-    ) -> Result<Expression<'s>, String> {
+    ) -> Result<Expression<'s>, Diagnostic> {
         while let Some(op) = self.peek() {
             let op = match op {
                 Token::Plus => BinaryOp::Add,
@@ -195,29 +255,29 @@ impl<'s> Parser<'s> {
         Ok(lhs)
     }
 
-    fn parse_expression(&mut self) -> Result<Expression<'s>, String> {
-        let lhs = dbg!(self.parse_unary())?;
+    fn parse_expression(&mut self) -> Result<Expression<'s>, Diagnostic> {
+        let lhs = self.parse_unary()?;
         self.parse_binary_op_rhs(0, lhs)
     }
-    fn parse_statement(&mut self) -> Result<Statement<'s>, String> {
+    fn parse_statement(&mut self) -> Result<Statement<'s>, Diagnostic> {
         let Some(first) = self.advance() else {
-            panic!("Unexpected EOF in statement")
+            return Err(self.err_here(ErrorKind::Parse, "unexpected EOF in statement"));
         };
         match first {
             Token::Let => {
                 let Some(Token::Ident(typ)) = self.advance() else {
-                    panic!("Expected a type after let")
+                    return Err(self.err_here(ErrorKind::Parse, "expected a type after 'let'"));
                 };
                 let typ = typ.into();
                 let Some(Token::Ident(name)) = self.advance() else {
-                    panic!("Expected a name after let")
+                    return Err(self.err_here(ErrorKind::Parse, "expected a name after 'let'"));
                 };
                 let Some(Token::Eq) = self.advance() else {
-                    panic!("Expected a = after let")
+                    return Err(self.err_here(ErrorKind::Parse, "expected '=' after 'let'"));
                 };
                 let expr = self.parse_expression()?;
                 if !self.consume_if(|t| matches!(t, Token::Semicolon)) {
-                    panic!("Expected a ; after a statement")
+                    return Err(self.err_here(ErrorKind::Parse, "expected ';' after statement"));
                 }
                 Ok(Statement::Let { typ, name, expr })
             }
@@ -227,7 +287,7 @@ impl<'s> Parser<'s> {
                 }
                 let expr = self.parse_expression()?;
                 if !self.consume_if(|t| matches!(t, Token::Semicolon)) {
-                    panic!("Expected a ; after a return statement")
+                    return Err(self.err_here(ErrorKind::Parse, "expected ';' after return"));
                 }
                 Ok(Statement::Return(Some(expr)))
             }
@@ -235,7 +295,9 @@ impl<'s> Parser<'s> {
                 self.unconsume_one();
                 let expr = self.parse_expression()?;
                 let Some(next) = self.advance() else {
-                    panic!("Expected a = or ; after expression")
+                    return Err(
+                        self.err_here(ErrorKind::Parse, "expected '=' or ';' after expression")
+                    );
                 };
                 let op = match next {
                     Token::Eq => Some(AssignOp::Assign),
@@ -257,65 +319,72 @@ impl<'s> Parser<'s> {
                     Statement::Expr(expr)
                 };
                 if !self.consume_if(|t| matches!(t, Token::Semicolon)) {
-                    panic!("Expected a ; after a statement")
+                    return Err(self.err_here(ErrorKind::Parse, "expected ';' after statement"));
                 }
                 Ok(stmt)
             }
         }
     }
 
-    fn parse_module_item(&mut self) -> Result<ModuleItem<'s>, String> {
+    fn parse_module_item(&mut self) -> Result<ModuleItem<'s>, Diagnostic> {
         let Some(first) = self.advance() else {
-            panic!("Unexpected EOF in module item")
+            return Err(self.err_here(ErrorKind::Parse, "unexpected EOF in module item"));
         };
         match first {
             Token::Let => {
                 let Some(Token::Ident(typ)) = self.advance() else {
-                    panic!("Expected a type after let")
+                    return Err(self.err_here(ErrorKind::Parse, "expected a type after 'let'"));
                 };
                 let typ = typ.into();
                 let Some(Token::Ident(name)) = self.advance() else {
-                    panic!("Expected a name after let")
+                    return Err(self.err_here(ErrorKind::Parse, "expected a name after 'let'"));
                 };
                 let Some(Token::Eq) = self.advance() else {
-                    panic!("Expected a = after let")
+                    return Err(self.err_here(ErrorKind::Parse, "expected '=' after 'let'"));
                 };
                 let expr = self.parse_expression()?;
                 if !self.consume_if(|t| matches!(t, Token::Semicolon)) {
-                    panic!("Expected a ; after let statement")
+                    return Err(self.err_here(ErrorKind::Parse, "expected ';' after let statement"));
                 }
                 Ok(ModuleItem::Let { typ, name, expr })
             }
             Token::Def => {
                 let Some(Token::Ident(ret)) = self.advance() else {
-                    panic!("Expected a type after def")
+                    return Err(self.err_here(ErrorKind::Parse, "expected a type after 'def'"));
                 };
                 let ret = ret.into();
                 let Some(Token::Ident(name)) = self.advance() else {
-                    panic!("Expected a name after def")
+                    return Err(self.err_here(ErrorKind::Parse, "expected a name after 'def'"));
                 };
                 let Some(Token::LParen) = self.advance() else {
-                    panic!("Expected a name after def")
+                    return Err(self.err_here(ErrorKind::Parse, "expected '(' after function name"));
                 };
                 let mut params = Vec::new();
                 while !self.consume_if(|t| matches!(t, Token::RParen)) {
                     let Some(Token::Ident(typ)) = self.advance() else {
-                        panic!("Expected a type in function definition")
+                        return Err(self
+                            .err_here(ErrorKind::Parse, "expected a type in function definition"));
                     };
                     let typ: TypeName<'s> = typ.into();
                     let Some(Token::Ident(name)) = self.advance() else {
-                        panic!("Expected a name in function definition")
+                        return Err(self
+                            .err_here(ErrorKind::Parse, "expected a name in function definition"));
                     };
                     params.push((typ, name));
                     if !self.consume_if(|t| matches!(t, Token::Comma)) {
                         if !self.consume_if(|t| matches!(t, Token::RParen)) {
-                            panic!("Expected a ) after parameters in function definition")
+                            return Err(self.err_here(
+                                ErrorKind::Parse,
+                                "expected ')' after parameters in function definition",
+                            ));
                         }
                         break;
                     };
                 }
                 let Some(Token::LBrace) = self.advance() else {
-                    panic!("Expected an {{ after function definition")
+                    return Err(
+                        self.err_here(ErrorKind::Parse, "expected '{' after function definition")
+                    );
                 };
                 let mut body = Vec::new();
                 while !self.consume_if(|t| matches!(t, Token::RBrace)) {
@@ -331,10 +400,12 @@ impl<'s> Parser<'s> {
             }
             Token::Module => {
                 let Some(Token::Ident(name)) = self.advance() else {
-                    panic!("Expected an identifier after module")
+                    return Err(
+                        self.err_here(ErrorKind::Parse, "expected an identifier after 'module'")
+                    );
                 };
                 let Some(Token::LBrace) = self.advance() else {
-                    panic!("Expected an {{ after module name")
+                    return Err(self.err_here(ErrorKind::Parse, "expected '{' after module name"));
                 };
                 let mut items = Vec::new();
                 while !self.consume_if(|t| matches!(t, Token::RBrace)) {
@@ -343,37 +414,47 @@ impl<'s> Parser<'s> {
                 }
                 Ok(ModuleItem::Module(Module { name, items }))
             }
-            other => Err(format!("Unsupported token in module item: {other:?}")),
+            other => Err(self.err_last(
+                ErrorKind::Parse,
+                format!("unsupported token in module item: {other:?}"),
+            )),
         }
     }
 
-    fn parse_item(&mut self) -> Result<Item<'s>, String> {
+    fn parse_item(&mut self) -> Result<Item<'s>, Diagnostic> {
         let Some(first) = self.advance() else {
-            panic!("Unexpected EOF in item")
+            return Err(self.err_here(ErrorKind::Parse, "unexpected EOF in item"));
         };
         match first {
             Token::Use => {
                 let Some(Token::Ident(root)) = self.advance() else {
-                    panic!("Expected an identifier after use")
+                    return Err(
+                        self.err_here(ErrorKind::Parse, "expected an identifier after 'use'")
+                    );
                 };
                 let mut path = vec![root];
                 while self.consume_if(|t| matches!(t, Token::Slash)) {
                     let Some(Token::Ident(component)) = self.advance() else {
-                        panic!("Expected an identifier after / in use")
+                        return Err(self.err_here(
+                            ErrorKind::Parse,
+                            "expected an identifier after '/' in use",
+                        ));
                     };
                     path.push(component);
                 }
                 if !self.consume_if(|t| matches!(t, Token::Semicolon)) {
-                    panic!("Expected a ; after use statement")
+                    return Err(self.err_here(ErrorKind::Parse, "expected ';' after use statement"));
                 }
                 Ok(Item::Use(path))
             }
             Token::Module => {
                 let Some(Token::Ident(name)) = self.advance() else {
-                    panic!("Expected an identifier after module")
+                    return Err(
+                        self.err_here(ErrorKind::Parse, "expected an identifier after 'module'")
+                    );
                 };
                 let Some(Token::LBrace) = self.advance() else {
-                    panic!("Expected an {{ after module name")
+                    return Err(self.err_here(ErrorKind::Parse, "expected '{' after module name"));
                 };
                 let mut items = Vec::new();
                 while !self.consume_if(|t| matches!(t, Token::RBrace)) {
@@ -384,13 +465,13 @@ impl<'s> Parser<'s> {
             }
             _ => {
                 self.unconsume_one();
-                let stmt = dbg!(self.parse_statement())?;
+                let stmt = self.parse_statement()?;
                 Ok(Item::TopStatement(stmt))
             }
         }
     }
 
-    pub fn parse(mut self) -> Result<Program<'s>, String> {
+    pub fn parse(mut self) -> Result<Program<'s>, Diagnostic> {
         let mut items = Vec::new();
         let mut main_items = Vec::new();
 
@@ -402,7 +483,7 @@ impl<'s> Parser<'s> {
                 }
                 _ => {
                     let item = self.parse_item()?;
-                    items.push(dbg!(item));
+                    items.push(item);
                 }
             }
         }

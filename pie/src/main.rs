@@ -1,12 +1,14 @@
 #![allow(dead_code)]
 mod ast;
 mod codegen;
+mod diagnostics;
 mod lexer;
 mod parser;
 mod piestd;
 mod runtime;
 mod typecheck;
 
+use diagnostics::print_diagnostic;
 use inkwell::context::Context;
 use inkwell::execution_engine::JitFunction;
 use inkwell::OptimizationLevel;
@@ -24,10 +26,20 @@ fn main() -> anyhow::Result<()> {
     let src = fs::read_to_string(&file_path)
         .map_err(|e| anyhow::anyhow!("failed to read file {file_path}: {}", e))?;
 
-    let parser = Parser::new(&src).map_err(|_| anyhow::anyhow!("failed to construct a parser"))?;
-    let prog = parser
-        .parse()
-        .map_err(|e| anyhow::anyhow!("parse error: {}", e))?;
+    let parser = match Parser::new(&src) {
+        Ok(p) => p,
+        Err(d) => {
+            print_diagnostic(&file_path, &src, &d);
+            std::process::exit(1);
+        }
+    };
+    let prog = match parser.parse() {
+        Ok(p) => p,
+        Err(d) => {
+            print_diagnostic(&file_path, &src, &d);
+            std::process::exit(1);
+        }
+    };
 
     // println!("{prog:#?}");
 
