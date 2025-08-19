@@ -291,6 +291,28 @@ impl<'s> Parser<'s> {
                 }
                 Ok(Statement::Return(Some(expr)))
             }
+            Token::For => {
+                let Some(Token::Ident(var)) = self.advance() else {
+                    panic!("Expected a name after for")
+                };
+                let Some(Token::In) = self.advance() else {
+                    panic!("Expected in after the variable name in for loop")
+                };
+                let iterable = self.parse_expression()?;
+                let Some(Token::LBrace) = self.advance() else {
+                    panic!("Expected an {{ after for loop")
+                };
+                let mut body = Vec::new();
+                while !self.consume_if(|t| matches!(t, Token::RBrace)) {
+                    let statement = self.parse_statement()?;
+                    body.push(statement);
+                }
+                Ok(Statement::For {
+                    iterable,
+                    var,
+                    body,
+                })
+            }
             _ => {
                 self.unconsume_one();
                 let expr = self.parse_expression()?;
