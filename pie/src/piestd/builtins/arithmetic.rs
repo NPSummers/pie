@@ -63,6 +63,14 @@ pie_native_fn!(pie_mul(a: GcRef, b: GcRef) -> Option<GcBox> {
         (Float(a), Float(b)) => (a * b).into(),
         (&Int(a), Float(b)) => (a as f64 * b).into(),
         (Float(a), &Int(b)) => (a * b as f64).into(),
+        (List(list), &Int(factor)) => {
+            let factor: usize = factor.try_into().unwrap();
+            let mut out = Vec::with_capacity(list.len() * factor);
+            for _ in 0..factor {
+                out.extend(list.iter().cloned());
+            }
+            out.into()
+        }
         _ => return None,
     })
 });

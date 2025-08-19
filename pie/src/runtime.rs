@@ -104,6 +104,12 @@ impl From<String> for GcBox {
     }
 }
 
+impl From<Vec<GcBox>> for GcBox {
+    fn from(value: Vec<GcBox>) -> Self {
+        GcBox::new(Value::List(value))
+    }
+}
+
 impl From<&str> for GcBox {
     fn from(value: &str) -> Self {
         GcBox::new(Value::Str(value.to_owned()))
