@@ -36,4 +36,4 @@ jobs:
           LLVM_SYS_170_PREFIX: /usr/lib/llvm-17
           CC: clang-17
           CXX: clang++-17
-        run: cargo run --manifest-path pie/Cargo.toml -- ../working_example.pie
+        run: cargo run --manifest-path pie/Cargo.toml -- examples/working_example.pie
