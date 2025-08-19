@@ -1,6 +1,6 @@
 use pie/std;
 
-public def void main() {
+def void main() {
     std::print("hello");
 }
 
