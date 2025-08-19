@@ -31,6 +31,20 @@ pie_native_fn!(pie_iter_next(iter: GcRef) pie "std::iter::next"[Any] => Any -> O
     iter.next()
 });
 
+pie_native_fn!(pie_iter_range(start: GcRef, stop: GcRef, step: GcRef) pie "std::iter::range"[Int, Int, Int] => Any -> Option<GcBox> {
+    let &Value::Int(start) = &*start.value() else {
+        return None
+    };
+    let &Value::Int(stop) = &*stop.value() else {
+        return None
+    };
+    let &Value::Int(step) = &*step.value() else {
+        return None
+    };
+    let iter = (start..stop).step_by(step.try_into().unwrap()).map(GcBox::from);
+    Some(GcBox::new(Value::Iterator(Box::new(iter))))
+});
+
 #[derive(Debug)]
 // A wrapper that allows holding a reference to variant of a Value in a GcBox
 struct BorrowWrapper<Inner: 'static> {
