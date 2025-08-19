@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install LLVM 17
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y llvm-17 llvm-17-dev clang-17 llvm-17-tools lld-17
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build
+        env:
+          LLVM_SYS_170_PREFIX: /usr/lib/llvm-17
+          CC: clang-17
+          CXX: clang++-17
+        run: cargo build --verbose
+
+      - name: Run working_example
+        env:
+          LLVM_SYS_170_PREFIX: /usr/lib/llvm-17
+          CC: clang-17
+          CXX: clang++-17
+        run: cargo run -- working_example.pie
