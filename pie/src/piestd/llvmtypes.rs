@@ -24,6 +24,12 @@ impl LLVMTypeEquivalent for f64 {
     }
 }
 
+impl LLVMTypeEquivalent for bool {
+    fn as_llvm_type<'ctx>(ctx: &'ctx Context) -> BasicTypeEnum<'ctx> {
+        ctx.i8_type().into()
+    }
+}
+
 impl<T> LLVMTypeEquivalent for *const T {
     fn as_llvm_type<'ctx>(ctx: &'ctx Context) -> BasicTypeEnum<'ctx> {
         ctx.ptr_type(AddressSpace::from(0)).into()

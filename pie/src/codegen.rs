@@ -261,6 +261,15 @@ impl<'ctx> CodeGen<'ctx> {
                     .expect("call");
                 Some(call.try_as_basic_value().left().unwrap())
             }
+            &Expression::Bool(b) => {
+                let fn_bool_new = self.module.get_function("pie_bool_new").unwrap();
+                let cv = self.context.i8_type().const_int(b as u64, false);
+                let call = self
+                    .builder
+                    .build_call(fn_bool_new, &[cv.into()], "newbool")
+                    .expect("call");
+                Some(call.try_as_basic_value().left().unwrap())
+            }
             Expression::Str(s) => {
                 let gv = self
                     .builder

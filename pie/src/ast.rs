@@ -4,6 +4,7 @@ use std::borrow::Cow;
 pub enum TypeName<'s> {
     Int,
     Float,
+    Bool,
     String,
     List,
     Map,
@@ -18,6 +19,7 @@ impl<'s> From<&'s str> for TypeName<'s> {
             "string" => TypeName::String,
             "int" => TypeName::Int,
             "float" => TypeName::Float,
+            "bool" => TypeName::Bool,
             "map" => TypeName::Map,
             "list" => TypeName::List,
             custom => TypeName::Custom(custom),
@@ -116,6 +118,7 @@ pub enum UnaryOp {
 pub enum Expression<'s> {
     Int(i64),
     Float(f64),
+    Bool(bool),
     Str(Cow<'s, str>),
     Ident(&'s str),
     Binary(Box<Expression<'s>>, BinaryOp, Box<Expression<'s>>),

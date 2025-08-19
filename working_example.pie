@@ -20,4 +20,5 @@ def void main() {
     std::print(meaning);
     std::print("foo");
     std::print(2.5 + 2.0);
+    std::print(true);
 }

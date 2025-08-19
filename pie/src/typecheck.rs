@@ -9,6 +9,7 @@ pub enum Type {
     Map,
     Void,
     Float,
+    Bool,
     Any,
     Function(Vec<Type>, Box<Type>),
 }
@@ -69,6 +70,7 @@ impl From<&TypeName<'_>> for Type {
             TypeName::Void => Type::Void,
             TypeName::Custom(_) => Type::Any,
             TypeName::Float => Type::Float,
+            TypeName::Bool => Type::Bool,
         }
     }
 }
@@ -269,5 +271,6 @@ fn infer_expr_type<'s>(
         // TODO: Account for unary ops affecting the type
         Expression::Unary(_op, expr) => infer_expr_type(expr, env, module_fns),
         Expression::Float(_) => Ok(Type::Float),
+        Expression::Bool(_) => Ok(Type::Bool),
     }
 }

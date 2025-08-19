@@ -9,6 +9,7 @@ use std::rc::Rc;
 pub enum Value {
     Int(i64),
     Float(f64),
+    Bool(bool),
     Str(String),
     List(Vec<GcBox>),
     Map(HashMap<String, GcBox>),
@@ -20,6 +21,7 @@ impl Display for Value {
         match self {
             Int(v) => write!(f, "{v}"),
             Float(v) => write!(f, "{v}"),
+            Bool(v) => write!(f, "{v}"),
             Str(s) => write!(f, "{s}"),
             List(l) => {
                 write!(f, "[")?;
@@ -89,6 +91,12 @@ impl From<i64> for GcBox {
 impl From<f64> for GcBox {
     fn from(value: f64) -> Self {
         GcBox::new(Value::Float(value))
+    }
+}
+
+impl From<bool> for GcBox {
+    fn from(value: bool) -> Self {
+        GcBox::new(Value::Bool(value))
     }
 }
 

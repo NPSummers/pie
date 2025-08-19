@@ -6,6 +6,7 @@ use crate::{
 pub fn register(reg: &mut Registry) {
     pie_int_new_register(reg);
     pie_float_new_register(reg);
+    pie_bool_new_register(reg);
 
     pie_add_register(reg);
     pie_sub_register(reg);
@@ -18,6 +19,10 @@ pie_native_fn!(pie_int_new(v: i64) -> GcBox {
 });
 
 pie_native_fn!(pie_float_new(v: f64) -> GcBox {
+    v.into()
+});
+
+pie_native_fn!(pie_bool_new(v: bool) -> GcBox {
     v.into()
 });
 
