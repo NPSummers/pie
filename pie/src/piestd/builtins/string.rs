@@ -3,11 +3,6 @@ use crate::{
     runtime::{GcBox, GcRef},
 };
 
-pub fn register<'ctx>(reg: &mut Registry<'ctx>) {
-    pie_string_new_register(reg);
-    pie_to_string_register(reg);
-}
-
 pie_native_fn! {pie_string_new(ptr: *const u8, len: u64) -> GcBox {
     unsafe {
         let bytes = core::slice::from_raw_parts(ptr, len as usize);

@@ -228,6 +228,12 @@ impl<'s> Parser<'s> {
                 Token::Minus => BinaryOp::Sub,
                 Token::Star => BinaryOp::Mul,
                 Token::Slash => BinaryOp::Div,
+                Token::Eq => BinaryOp::Eq,
+                Token::Ne => BinaryOp::Ne,
+                Token::Gt => BinaryOp::Gt,
+                Token::Lt => BinaryOp::Lt,
+                Token::GtEq => BinaryOp::GtEq,
+                Token::LtEq => BinaryOp::LtEq,
                 _ => break,
             };
             let prec = op.precedence();
@@ -242,6 +248,12 @@ impl<'s> Parser<'s> {
                     Token::Minus => BinaryOp::Sub,
                     Token::Star => BinaryOp::Mul,
                     Token::Slash => BinaryOp::Div,
+                    Token::EqEq => BinaryOp::Eq,
+                    Token::Ne => BinaryOp::Ne,
+                    Token::Lt => BinaryOp::Lt,
+                    Token::Gt => BinaryOp::Gt,
+                    Token::GtEq => BinaryOp::GtEq,
+                    Token::LtEq => BinaryOp::LtEq,
                     _ => break,
                 };
                 let next_prec = op.precedence();
@@ -290,6 +302,40 @@ impl<'s> Parser<'s> {
                     return Err(self.err_here(ErrorKind::Parse, "expected ';' after return"));
                 }
                 Ok(Statement::Return(Some(expr)))
+            }
+            Token::For => {
+                let Some(Token::Ident(var)) = self.advance() else {
+                    panic!("Expected a name after for")
+                };
+                let Some(Token::In) = self.advance() else {
+                    panic!("Expected in after the variable name in for loop")
+                };
+                let iterable = self.parse_expression()?;
+                let Some(Token::LBrace) = self.advance() else {
+                    panic!("Expected an {{ after for loop")
+                };
+                let mut body = Vec::new();
+                while !self.consume_if(|t| matches!(t, Token::RBrace)) {
+                    let statement = self.parse_statement()?;
+                    body.push(statement);
+                }
+                Ok(Statement::For {
+                    iterable,
+                    var,
+                    body,
+                })
+            }
+            Token::While => {
+                let cond = self.parse_expression()?;
+                let Some(Token::LBrace) = self.advance() else {
+                    panic!("Expected an {{ after while loop")
+                };
+                let mut body = Vec::new();
+                while !self.consume_if(|t| matches!(t, Token::RBrace)) {
+                    let statement = self.parse_statement()?;
+                    body.push(statement);
+                }
+                Ok(Statement::While { cond, body })
             }
             _ => {
                 self.unconsume_one();

@@ -3,15 +3,6 @@ use crate::{
     runtime::{GcBox, GcRef, Value},
 };
 
-pub fn register(reg: &mut Registry) {
-    pie_list_new_register(reg);
-    pie_list_len_register(reg);
-    pie_list_get_register(reg);
-    pie_list_push_register(reg);
-    pie_list_pop_register(reg);
-    pie_list_remove_register(reg);
-}
-
 pie_native_fn!(pie_list_new() pie "std::list::new"[] => List -> GcBox {
     GcBox::new(Value::List(Vec::new()))
 });

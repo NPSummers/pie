@@ -17,6 +17,11 @@ pub struct CodeGen<'ctx> {
     pub registry: &'ctx Registry<'ctx>,
 }
 
+enum GeneratedStatement<'ctx> {
+    Void,
+    Return(Option<BasicValueEnum<'ctx>>),
+}
+
 impl<'ctx> CodeGen<'ctx> {
     pub fn new(context: &'ctx Context, registry: &'ctx Registry<'ctx>, name: &str) -> Self {
         let module = context.create_module(name);
@@ -74,6 +79,8 @@ impl<'ctx> CodeGen<'ctx> {
             return Err("PIE main function not found after compilation".into());
         }
 
+        self.module.print_to_stderr();
+
         // Verify the module
         if let Err(errors) = self.module.verify() {
             return Err(format!("LLVM module verification failed: {}", errors));
@@ -119,107 +126,9 @@ impl<'ctx> CodeGen<'ctx> {
         let mut has_return = false;
 
         for stmt in &func.body {
-            match stmt {
-                Statement::Let {
-                    typ: _typ,
-                    name,
-                    expr,
-                } => {
-                    if let Some(val) = self.codegen_expr(expr, &locals) {
-                        let alloca = self.builder.build_alloca(ptr_type, name).expect("alloca");
-                        let _ = self.builder.build_store(alloca, val);
-                        locals.insert(name, alloca);
-                    }
-                }
-                Statement::Assignment { target, op, value } => {
-                    // Load the current value of the target
-                    let target_ptr = if let Expression::Ident(name) = target {
-                        locals.get(name).cloned()
-                    } else {
-                        None
-                    };
-
-                    if let Some(ptr) = target_ptr {
-                        let current_val = self
-                            .builder
-                            .build_load(ptr_type, ptr, "current_val")
-                            .expect("load");
-                        let value_val =
-                            self.codegen_expr(value, &locals).expect("value expression");
-
-                        // Handle different assignment operators
-                        let result = match op {
-                            AssignOp::Plus => {
-                                let fn_add = self.module.get_function("pie_add").unwrap();
-                                let call = self
-                                    .builder
-                                    .build_call(
-                                        fn_add,
-                                        &[current_val.into(), value_val.into()],
-                                        "add_result",
-                                    )
-                                    .expect("call");
-                                call.try_as_basic_value().left().unwrap()
-                            }
-                            AssignOp::Minus => {
-                                let fn_sub = self.module.get_function("pie_sub").unwrap();
-                                let call = self
-                                    .builder
-                                    .build_call(
-                                        fn_sub,
-                                        &[current_val.into(), value_val.into()],
-                                        "sub_result",
-                                    )
-                                    .expect("call");
-                                call.try_as_basic_value().left().unwrap()
-                            }
-                            AssignOp::Star => {
-                                let fn_mul = self.module.get_function("pie_mul").unwrap();
-                                let call = self
-                                    .builder
-                                    .build_call(
-                                        fn_mul,
-                                        &[current_val.into(), value_val.into()],
-                                        "mul_result",
-                                    )
-                                    .expect("call");
-                                call.try_as_basic_value().left().unwrap()
-                            }
-                            AssignOp::Slash => {
-                                let fn_div = self.module.get_function("pie_div").unwrap();
-                                let call = self
-                                    .builder
-                                    .build_call(
-                                        fn_div,
-                                        &[current_val.into(), value_val.into()],
-                                        "sub_result",
-                                    )
-                                    .expect("call");
-                                call.try_as_basic_value().left().unwrap()
-                            }
-                            AssignOp::Assign => value_val,
-                        };
-
-                        // Store the result back to the target
-                        let _ = self.builder.build_store(ptr, result);
-                    }
-                }
-                Statement::Expr(e) => {
-                    let _ = self.codegen_expr(e, &locals);
-                }
-                Statement::Return(Some(e)) => {
-                    if let Some(v) = self.codegen_expr(e, &locals) {
-                        if matches!(func.ret, TypeName::Void) {
-                            let _ = self.builder.build_return(None);
-                        } else {
-                            let _ = self.builder.build_return(Some(&v));
-                        }
-                        has_return = true;
-                        break;
-                    }
-                }
-                Statement::Return(None) => {
-                    let _ = self.builder.build_return(None);
+            match self.codegen_stmt(&mut locals, func, fnv, stmt) {
+                GeneratedStatement::Void => (),
+                GeneratedStatement::Return(_) => {
                     has_return = true;
                     break;
                 }
@@ -233,6 +142,207 @@ impl<'ctx> CodeGen<'ctx> {
                 let null = ptr_type.const_null();
                 let null_val = null.as_basic_value_enum();
                 let _ = self.builder.build_return(Some(&null_val));
+            }
+        }
+    }
+
+    fn codegen_stmt<'a>(
+        &self,
+        locals: &mut HashMap<&'a str, PointerValue<'ctx>>,
+        func: &Function,
+        fnv: FunctionValue<'ctx>,
+        stmt: &Statement<'a>,
+    ) -> GeneratedStatement<'ctx> {
+        match stmt {
+            Statement::For {
+                iterable,
+                var,
+                body,
+            } => {
+                let iterable = self
+                    .codegen_expr(iterable, locals)
+                    .expect("Cannot iterate over a void expression");
+                let iter_new = self.module.get_function("pie_iter_new").unwrap();
+                let iterable = self
+                    .builder
+                    .build_call(iter_new, &[iterable.into()], "iternew")
+                    .expect("create call to create iterator");
+                let iterable = iterable.try_as_basic_value().left().unwrap();
+
+                let loop_bb = self.context.append_basic_block(fnv, "for_loop");
+                self.builder.build_unconditional_branch(loop_bb).unwrap();
+                self.builder.position_at_end(loop_bb);
+
+                let iter_next = self.module.get_function("pie_iter_next").unwrap();
+                let next = self
+                    .builder
+                    .build_call(iter_next, &[iterable.into()], "iternext")
+                    .unwrap()
+                    .try_as_basic_value()
+                    .left()
+                    .unwrap()
+                    .into_pointer_value();
+                let var_alloca = self
+                    .builder
+                    .build_alloca(self.registry.ptr_type(), var)
+                    .unwrap();
+                self.builder.build_store(var_alloca, next).unwrap();
+
+                let is_null = self.builder.build_is_null(next, "iter_is_null").unwrap();
+                let loop_hasnext = self.context.append_basic_block(fnv, "for_loop_hasnext");
+                let loop_after = self.context.append_basic_block(fnv, "after_for");
+                self.builder
+                    .build_conditional_branch(is_null, loop_after, loop_hasnext)
+                    .unwrap();
+
+                self.builder.position_at_end(loop_hasnext);
+
+                locals.insert(var, var_alloca);
+                for stmt in body {
+                    self.codegen_stmt(locals, func, fnv, stmt);
+                }
+                self.builder.build_unconditional_branch(loop_bb).unwrap();
+                locals.remove(var);
+                self.builder.position_at_end(loop_after);
+                GeneratedStatement::Void
+            }
+            Statement::While { cond, body } => {
+                let while_bb = self.context.append_basic_block(fnv, "while_loop");
+                self.builder.build_unconditional_branch(while_bb).unwrap();
+                self.builder.position_at_end(while_bb);
+                let cond = self
+                    .codegen_expr(cond, locals)
+                    .expect("a non-void condition in a while loop");
+                let truthy = self.module.get_function("pie_internal_truthy").unwrap();
+                let truthy = self
+                    .builder
+                    .build_call(truthy, &[cond.into()], "while_cond_truthy")
+                    .unwrap()
+                    .try_as_basic_value()
+                    .left()
+                    .unwrap()
+                    .into_pointer_value();
+                let is_false = self
+                    .builder
+                    .build_is_null(truthy, "while_is_false")
+                    .unwrap();
+                let while_then = self.context.append_basic_block(fnv, "while_loop_then");
+                let while_after = self.context.append_basic_block(fnv, "while_loop_after");
+                self.builder
+                    .build_conditional_branch(is_false, while_after, while_then)
+                    .unwrap();
+                self.builder.position_at_end(while_then);
+                for stmt in body {
+                    self.codegen_stmt(locals, func, fnv, stmt);
+                }
+                self.builder.build_unconditional_branch(while_bb).unwrap();
+                self.builder.position_at_end(while_after);
+                GeneratedStatement::Void
+            }
+            Statement::Let {
+                typ: _typ,
+                name,
+                expr,
+            } => {
+                // TODO: Handle expressions that don't evaluate to a value
+                if let Some(val) = self.codegen_expr(expr, locals) {
+                    let alloca = self
+                        .builder
+                        .build_alloca(self.registry.ptr_type(), name)
+                        .expect("alloca");
+                    let _ = self.builder.build_store(alloca, val);
+                    locals.insert(name, alloca);
+                }
+                GeneratedStatement::Void
+            }
+            Statement::Assignment { target, op, value } => {
+                // Load the current value of the target
+                let Expression::Ident(name) = target else {
+                    panic!("Codegen for assignment to expressions that aren't identifiers is not supported yet")
+                };
+                let ptr = locals.get(name).cloned().unwrap();
+
+                let current_val = self
+                    .builder
+                    .build_load(self.registry.ptr_type(), ptr, "current_val")
+                    .expect("load");
+                let value_val = self.codegen_expr(value, locals).expect("value expression");
+
+                // Handle different assignment operators
+                let result = match op {
+                    AssignOp::Plus => {
+                        let fn_add = self.module.get_function("pie_add").unwrap();
+                        let call = self
+                            .builder
+                            .build_call(
+                                fn_add,
+                                &[current_val.into(), value_val.into()],
+                                "add_result",
+                            )
+                            .expect("call");
+                        call.try_as_basic_value().left().unwrap()
+                    }
+                    AssignOp::Minus => {
+                        let fn_sub = self.module.get_function("pie_sub").unwrap();
+                        let call = self
+                            .builder
+                            .build_call(
+                                fn_sub,
+                                &[current_val.into(), value_val.into()],
+                                "sub_result",
+                            )
+                            .expect("call");
+                        call.try_as_basic_value().left().unwrap()
+                    }
+                    AssignOp::Star => {
+                        let fn_mul = self.module.get_function("pie_mul").unwrap();
+                        let call = self
+                            .builder
+                            .build_call(
+                                fn_mul,
+                                &[current_val.into(), value_val.into()],
+                                "mul_result",
+                            )
+                            .expect("call");
+                        call.try_as_basic_value().left().unwrap()
+                    }
+                    AssignOp::Slash => {
+                        let fn_div = self.module.get_function("pie_div").unwrap();
+                        let call = self
+                            .builder
+                            .build_call(
+                                fn_div,
+                                &[current_val.into(), value_val.into()],
+                                "sub_result",
+                            )
+                            .expect("call");
+                        call.try_as_basic_value().left().unwrap()
+                    }
+                    AssignOp::Assign => value_val,
+                };
+
+                // Store the result back to the target
+                let _ = self.builder.build_store(ptr, result);
+                GeneratedStatement::Void
+            }
+            Statement::Expr(e) => {
+                let _ = self.codegen_expr(e, locals);
+                GeneratedStatement::Void
+            }
+            Statement::Return(Some(e)) => {
+                let Some(v) = self.codegen_expr(e, locals) else {
+                    panic!("Attempted to codegen a return with an expression that evaluates to nothing")
+                };
+                if matches!(func.ret, TypeName::Void) {
+                    self.builder.build_return(None).unwrap();
+                } else {
+                    self.builder.build_return(Some(&v)).unwrap();
+                }
+                GeneratedStatement::Return(Some(v))
+            }
+            Statement::Return(None) => {
+                let _ = self.builder.build_return(None);
+                GeneratedStatement::Return(None)
             }
         }
     }
@@ -305,6 +415,12 @@ impl<'ctx> CodeGen<'ctx> {
                     BinaryOp::Sub => "pie_sub",
                     BinaryOp::Mul => "pie_mul",
                     BinaryOp::Div => "pie_div",
+                    BinaryOp::Eq => "pie_eq",
+                    BinaryOp::Ne => "pie_ne",
+                    BinaryOp::Lt => "pie_lt",
+                    BinaryOp::Gt => "pie_gt",
+                    BinaryOp::LtEq => "pie_lteq",
+                    BinaryOp::GtEq => "pie_gteq",
                 };
 
                 let f = self.module.get_function(fn_name).unwrap();

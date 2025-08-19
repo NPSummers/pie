@@ -72,6 +72,9 @@ pub enum Token<'s> {
     #[token("for")]
     /// for
     For,
+    #[token("in")]
+    /// in
+    In,
     #[token("while")]
     /// while
     While,
@@ -84,6 +87,12 @@ pub enum Token<'s> {
     #[token("return")]
     /// return
     Return,
+    #[token("break")]
+    /// break
+    Break,
+    #[token("continue")]
+    /// continue
+    Continue,
 
     // literals
     #[token("true", |_| true)]
@@ -129,6 +138,18 @@ pub enum Token<'s> {
     Ident(&'s str),
 
     // multi-char punctuation
+    #[token("==")]
+    /// ==
+    EqEq,
+    #[token("!=")]
+    /// ==
+    Ne,
+    #[token("<=")]
+    /// ==
+    LtEq,
+    #[token(">=")]
+    /// ==
+    GtEq,
     #[token("+=")]
     /// +=
     PlusEq,
@@ -143,6 +164,12 @@ pub enum Token<'s> {
     SlashEq,
 
     // single-char tokens
+    #[token("<")]
+    /// <
+    Lt,
+    #[token(">")]
+    /// >
+    Gt,
     #[token("+")]
     /// +
     Plus,

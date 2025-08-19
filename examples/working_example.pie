@@ -3,7 +3,7 @@ use pie/std;
 module demo {
     module nested {
         def string get_question() {
-            return "?";
+            return "foo";
         }
     }
 
@@ -33,4 +33,14 @@ def void main() {
     std::print(!true);
 
     std::print('a');
+
+    for char in question {
+        std::print(char);
+    }
+
+    let int i = 0;
+    while i < 3 {
+        std::print(i);
+        i += 1;
+    }
 }

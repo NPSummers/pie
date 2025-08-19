@@ -8,6 +8,7 @@ use inkwell::{
 };
 mod arithmetic;
 mod io;
+mod iter;
 mod list;
 mod map;
 mod rc;
@@ -27,6 +28,9 @@ pub struct NativeFunction<'ctx> {
     pub native_name: &'static str,
     pub std: Option<Rc<StdFunction>>,
 }
+
+#[linkme::distributed_slice]
+pub static REGISTRATION_FUNCTIONS: [fn(&mut Registry<'_>)];
 
 pub struct Registry<'ctx> {
     ctx: &'ctx Context,
@@ -81,7 +85,13 @@ macro_rules! pie_native_fn {
         pub unsafe extern "C" fn $name($($param: $ty),*) $(-> $ret)? $body
     };
     ($name:ident($($param:ident : $ty:ty),*) $(pie $path:literal[$($piety:ident),*] $(=> $pieret:ident)?)? $(-> $ret:ty)? $body:block ) => {
+
+
     ::paste::paste! {
+        #[::linkme::distributed_slice(crate::piestd::builtins::REGISTRATION_FUNCTIONS)]
+        #[allow(non_upper_case_globals)]
+        static [<$name _register_distslice>]: fn(&mut Registry<'_>) = [<$name _register>];
+
         fn [<$name _register>]<'ctx>(reg: &mut crate::piestd::builtins::Registry<'ctx>) {
             #[allow(unused_imports)]
             use ::inkwell::types::{BasicType, BasicMetadataTypeEnum};
@@ -158,11 +168,9 @@ impl<'ctx> Registry<'ctx> {
         };
     }
     pub fn register_builtins(&mut self) {
-        string::register(self);
-        arithmetic::register(self);
-        map::register(self);
-        list::register(self);
-        io::register(self);
+        for func in REGISTRATION_FUNCTIONS {
+            func(self);
+        }
     }
     pub fn functions(&self) -> impl Iterator<Item = &NativeFunction<'ctx>> {
         self.functions.values().map(|v| v.as_ref())

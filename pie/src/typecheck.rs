@@ -156,6 +156,43 @@ fn check_stmt<'s>(
             locals.insert(*name, declared);
             Ok(())
         }
+        Statement::While { cond, body } => {
+            let cond = infer_expr_type(cond, locals, modules, path)?;
+            if let Type::Function(_, _) | Type::Void = cond {
+                return Err(format!("invalid type for while loop condition: {cond:?}"));
+            };
+            for stmt in body {
+                check_stmt(modules, path, locals, func_ret, stmt)?;
+            }
+            Ok(())
+        }
+        Statement::For {
+            iterable,
+            var,
+            body,
+        } => {
+            let iterable = infer_expr_type(iterable, locals, modules, path)?;
+            let item_type = match iterable {
+                Type::Void | Type::Int | Type::Float | Type::Bool | Type::Function(_, _) => {
+                    return Err(format!("Attempted to iterate over {iterable:?}"))
+                }
+                Type::Map => Type::Map,
+                Type::List => Type::Any,
+                Type::String => Type::String,
+                Type::Any => Type::Any,
+            };
+
+            let old = locals.insert(var, item_type);
+
+            for stmt in body {
+                check_stmt(modules, path, locals, func_ret, stmt)?;
+            }
+            locals.remove(var);
+            if let Some(old) = old {
+                locals.insert(var, old);
+            }
+            Ok(())
+        }
         Statement::Assignment { target, op, value } => {
             let (var_name, var_type) = match target {
                 Expression::Ident(name) => {
@@ -234,6 +271,7 @@ fn binary_result_type(op: BinaryOp, lhs: &Type, rhs: &Type) -> Type {
             }
             Type::Any
         }
+        Lt | Gt | Eq | Ne | LtEq | GtEq => Type::Bool,
     }
 }
 

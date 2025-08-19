@@ -5,21 +5,6 @@ use crate::{
     runtime::{GcBox, GcRef, Value},
 };
 
-pub fn register(reg: &mut Registry) {
-    pie_int_new_register(reg);
-    pie_float_new_register(reg);
-    pie_bool_new_register(reg);
-
-    pie_add_register(reg);
-    pie_sub_register(reg);
-    pie_mul_register(reg);
-    pie_div_register(reg);
-
-    pie_unary_add_register(reg);
-    pie_unary_sub_register(reg);
-    pie_unary_not_register(reg);
-}
-
 pie_native_fn!(pie_int_new(v: i64) -> GcBox {
     v.into()
 });
@@ -30,6 +15,49 @@ pie_native_fn!(pie_float_new(v: f64) -> GcBox {
 
 pie_native_fn!(pie_bool_new(v: bool) -> GcBox {
     v.into()
+});
+
+// Returns null if the provided value is not truthy, a valid GcRef(the one provided to it) otherwise
+pie_native_fn!(pie_internal_truthy(a: GcRef) -> GcRef {
+    use Value::*;
+    if a.is_null() {
+        return GcRef::new_null();
+    }
+    let val = a.value();
+    let bool_to_null = |b| if b {a.clone()} else {GcRef::new_null()};
+    bool_to_null(match &*val {
+        &Bool(b) => b,
+        &Int(i) => i != 0,
+        &Float(f) => f.is_finite() && f != 0.0,
+        List(l) => !l.is_empty(),
+        Map(m) => !m.is_empty(),
+        Str(s) =>  !s.is_empty(),
+        Iterator(_) => false,
+    })
+});
+
+pie_native_fn!(pie_eq(a: GcRef, b: GcRef) -> GcBox {
+    (*a.value() == *b.value()).into()
+});
+
+pie_native_fn!(pie_ne(a: GcRef, b: GcRef) -> GcBox {
+    (*a.value() != *b.value()).into()
+});
+
+pie_native_fn!(pie_lt(a: GcRef, b: GcRef) -> GcBox {
+    (*a.value() < *b.value()).into()
+});
+
+pie_native_fn!(pie_gt(a: GcRef, b: GcRef) -> GcBox {
+    (*a.value() > *b.value()).into()
+});
+
+pie_native_fn!(pie_gteq(a: GcRef, b: GcRef) -> GcBox {
+    (*a.value() >= *b.value()).into()
+});
+
+pie_native_fn!(pie_lteq(a: GcRef, b: GcRef) -> GcBox {
+    (*a.value() <= *b.value()).into()
 });
 
 pie_native_fn!(pie_add(a: GcRef, b: GcRef) -> Option<GcBox> {
@@ -63,6 +91,14 @@ pie_native_fn!(pie_mul(a: GcRef, b: GcRef) -> Option<GcBox> {
         (Float(a), Float(b)) => (a * b).into(),
         (&Int(a), Float(b)) => (a as f64 * b).into(),
         (Float(a), &Int(b)) => (a * b as f64).into(),
+        (List(list), &Int(factor)) => {
+            let factor: usize = factor.try_into().unwrap();
+            let mut out = Vec::with_capacity(list.len() * factor);
+            for _ in 0..factor {
+                out.extend(list.iter().cloned());
+            }
+            out.into()
+        }
         _ => return None,
     })
 });
@@ -86,7 +122,7 @@ pie_native_fn!(pie_unary_add(val: GcRef) -> Option<GcBox> {
         &Float(f) => f.into(),
         Str(s) => return s.parse::<i64>().ok().map(GcBox::from),
         &Bool(b) => (b as i64).into(),
-        List(_) | Map(_) => return None
+        _ => return None,
     })
 });
 
@@ -97,7 +133,7 @@ pie_native_fn!(pie_unary_sub(val: GcRef) -> Option<GcBox> {
         &Float(f) => f.neg().into(),
         Str(s) => return s.parse::<i64>().ok().map(Neg::neg).map(GcBox::from),
         &Bool(b) => (b as i64).neg().into(),
-        List(_) | Map(_) => return None
+        _ => return None,
     })
 });
 
@@ -109,6 +145,7 @@ pie_native_fn!(pie_unary_not(val: GcRef) -> Option<GcBox> {
         Str(s) => s.is_empty().into(),
         &Bool(b) => (!b).into(),
         List(l) => l.is_empty().into(),
-        Map(m) => m.is_empty().into()
+        Map(m) => m.is_empty().into(),
+        Iterator(_) => return None,
     })
 });
