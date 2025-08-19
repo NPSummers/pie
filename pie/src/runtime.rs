@@ -2,6 +2,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt::{Debug, Display};
+use std::mem::ManuallyDrop;
 use std::ptr::NonNull;
 use std::rc::Rc;
 
@@ -13,6 +14,31 @@ pub enum Value {
     Str(String),
     List(Vec<GcBox>),
     Map(HashMap<String, GcBox>),
+    Iterator(Box<dyn DebugIter>),
+}
+
+impl Clone for Value {
+    fn clone(&self) -> Self {
+        use Value::*;
+        match self {
+            &Int(v) => Int(v),
+            &Float(v) => Float(v),
+            &Bool(v) => Bool(v),
+            Str(v) => Str(v.clone()),
+            List(v) => List(v.clone()),
+            Map(v) => Map(v.clone()),
+            Iterator(iter) => Iterator(iter.clone_as_debug_iter()),
+        }
+    }
+}
+
+pub trait DebugIter: Iterator<Item = GcBox> + Debug {
+    fn clone_as_debug_iter(&self) -> Box<dyn DebugIter>;
+}
+impl<T: Iterator<Item = GcBox> + Debug + Clone + 'static> DebugIter for T {
+    fn clone_as_debug_iter(&self) -> Box<dyn DebugIter> {
+        Box::new(self.clone())
+    }
 }
 
 impl Display for Value {
@@ -45,6 +71,7 @@ impl Display for Value {
                 }
                 write!(f, "}}")
             }
+            Iterator(iter) => write!(f, "iterator {iter:?}"),
         }
     }
 }
@@ -108,6 +135,10 @@ impl From<bool> for GcBox {
 pub struct GcRef<'a>(pub Option<&'a RefCell<Value>>);
 
 impl GcRef<'_> {
+    pub fn is_null(&self) -> bool {
+        self.0.is_none()
+    }
+
     pub unsafe fn new_box_noincrement(&self) -> Rc<RefCell<Value>> {
         let Some(rc) = self.0 else {
             panic!("Attempted to construct a GcBox from a None GcRef")
@@ -116,10 +147,23 @@ impl GcRef<'_> {
         unsafe { Rc::from_raw(core::ptr::from_ref(rc)) }
     }
 
-    pub fn new_box(&self) -> GcBox {
-        let rc = unsafe { self.new_box_noincrement() };
+    pub fn new_rc(&self) -> Rc<RefCell<Value>> {
+        unsafe {
+            let rc = self.new_box_noincrement();
+            Rc::increment_strong_count(rc.as_ptr());
+            rc
+        }
+    }
 
-        GcBox(unsafe { NonNull::new_unchecked(Rc::into_raw(rc).cast_mut()) })
+    pub fn as_ptr(&self) -> *const RefCell<Value> {
+        core::ptr::from_ref(self.0.unwrap())
+    }
+
+    pub fn new_box(&self) -> GcBox {
+        let rc = self.new_rc();
+        let rc = ManuallyDrop::new(rc);
+        let ptr = Rc::as_ptr(&rc);
+        GcBox(unsafe { NonNull::new_unchecked(ptr.cast_mut()) })
     }
 
     pub fn value(&self) -> std::cell::Ref<'_, Value> {

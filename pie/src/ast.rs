@@ -75,6 +75,11 @@ pub enum AssignOp {
 
 #[derive(Debug, Clone)]
 pub enum Statement<'s> {
+    For {
+        iterable: Expression<'s>,
+        var: &'s str,
+        body: Vec<Statement<'s>>,
+    },
     Let {
         typ: TypeName<'s>,
         name: &'s str,
