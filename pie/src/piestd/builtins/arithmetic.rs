@@ -28,7 +28,7 @@ pie_native_fn!(pie_bool_new(v: bool) -> GcBox {
 
 pie_native_fn!(pie_add(a: GcRef, b: GcRef) -> Option<GcBox> {
     use Value::*;
-    Some(match (&*a.0.borrow(), &*b.0.borrow()) {
+    Some(match (&*a.value(), &*b.value()) {
         (Int(a), Int(b)) => (a + b).into(),
         (Str(a), b) => format!("{a}{b}").into(),
         (a, Str(b)) => format!("{a}{b}").into(),
@@ -41,7 +41,7 @@ pie_native_fn!(pie_add(a: GcRef, b: GcRef) -> Option<GcBox> {
 
 pie_native_fn!(pie_sub(a: GcRef, b: GcRef) -> Option<GcBox> {
     use Value::*;
-    Some(match (&*a.0.borrow(), &*b.0.borrow()) {
+    Some(match (&*a.value(), &*b.value()) {
         (Int(a), Int(b)) => (a - b).into(),
         (Float(a), Float(b)) => (a - b).into(),
         (&Int(a), Float(b)) => (a as f64 - b).into(),
@@ -52,7 +52,7 @@ pie_native_fn!(pie_sub(a: GcRef, b: GcRef) -> Option<GcBox> {
 
 pie_native_fn!(pie_mul(a: GcRef, b: GcRef) -> Option<GcBox> {
     use Value::*;
-    Some(match (&*a.0.borrow(), &*b.0.borrow()) {
+    Some(match (&*a.value(), &*b.value()) {
         (Int(a), Int(b)) => (a * b).into(),
         (Float(a), Float(b)) => (a * b).into(),
         (&Int(a), Float(b)) => (a as f64 * b).into(),
@@ -63,7 +63,7 @@ pie_native_fn!(pie_mul(a: GcRef, b: GcRef) -> Option<GcBox> {
 
 pie_native_fn!(pie_div(a: GcRef, b: GcRef) -> Option<GcBox> {
     use Value::*;
-    Some(match (&*a.0.borrow(), &*b.0.borrow()) {
+    Some(match (&*a.value(), &*b.value()) {
         (_, Int(0)) => return None,
         (Int(a), Int(b)) => (a / b).into(),
         (Float(a), Float(b)) => (a / b).into(),

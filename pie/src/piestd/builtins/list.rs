@@ -17,14 +17,14 @@ pie_native_fn!(pie_list_new() pie "std::list::new"[] => List -> GcBox {
 });
 
 pie_native_fn!(pie_list_len(list: GcRef) pie "std::list::len"[List] => Int -> i64 {
-    let Value::List(v) = &*list.0.borrow() else {
+    let Value::List(v) = &*list.value() else {
         return 0;
     };
     v.len() as i64
 });
 
 pie_native_fn!(pie_list_get(list: GcRef, idx: i64) pie "std::list::get"[List, Int] => Any -> Option<GcBox> {
-    let Value::List(v) = &*list.0.borrow() else {
+    let Value::List(v) = &*list.value() else {
         return None;
     };
     if idx.is_negative() {
@@ -34,24 +34,24 @@ pie_native_fn!(pie_list_get(list: GcRef, idx: i64) pie "std::list::get"[List, In
 });
 
 pie_native_fn!(pie_list_push(list: GcRef, val: GcRef) pie "std::list::push"[List, Any] {
-    let Value::List(v) = &mut *list.0.borrow_mut() else {
+    let Value::List(v) = &mut *list.value_mut() else {
         return;
     };
     v.push(val.new_box());
 });
 
 pie_native_fn!(pie_list_pop(list: GcRef) pie "std::list::pop"[List] => Any -> Option<GcBox> {
-    let Value::List(v) = &mut *list.0.borrow_mut() else {
+    let Value::List(v) = &mut *list.value_mut() else {
         return None;
     };
     v.pop()
 });
 
 pie_native_fn!(pie_list_remove(list: GcRef, idx: GcRef) pie "std::list::remove"[List, Int] => Any -> Option<GcBox> {
-    let Value::List(v) = &mut *list.0.borrow_mut() else {
+    let Value::List(v) = &mut *list.value_mut() else {
         return None;
     };
-    let Value::Int(idx) = *idx.0.borrow() else {
+    let Value::Int(idx) = *idx.value() else {
         return None;
     };
     if !(0..v.len() as i64).contains(&idx) {

@@ -18,6 +18,6 @@ pie_native_fn! {pie_string_new(ptr: *const u8, len: u64) -> GcBox {
 } }
 
 pie_native_fn!(pie_to_string(val: GcRef) pie "std::to_string"[Any] => String -> GcBox {
-    let s = val.0.borrow().to_string();
+    let s = val.value().to_string();
     s.into()
 });

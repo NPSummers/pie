@@ -9,14 +9,14 @@ pub fn register(reg: &mut Registry) {
 }
 
 pie_native_fn!(pie_print(val: GcRef) pie "std::print"[Any] {
-    println!("{}", val.0.borrow())
+    println!("{}", val.value())
 });
 
 pie_native_fn!(pie_http_get(url_val: GcRef, headers: GcRef) pie "std::http_get"[String, Map] => String -> GcBox {
-    let Value::Str(url) = &*url_val.0.borrow() else {
+    let Value::Str(url) = &*url_val.value() else {
         return "http error: expected url to be a string".into();
     };
-    let Value::Map(headers) = &*headers.0.borrow() else {
+    let Value::Map(headers) = &*headers.value() else {
         return "http error: expected headers to be a map".into();
     };
 
@@ -24,7 +24,7 @@ pie_native_fn!(pie_http_get(url_val: GcRef, headers: GcRef) pie "std::http_get"[
     let mut req = ureq::get(url);
 
     for (k, v) in headers {
-        req = req.header(k, &v.as_ref().0.borrow().to_string());
+        req = req.header(k, &v.as_ref().value().to_string());
     }
 
     match req.call() {

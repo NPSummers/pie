@@ -30,7 +30,7 @@ impl Display for Value {
                     v.fmt(f)?;
                 }
                 for v in values {
-                    write!(f, ", {}", v.as_ref().0.borrow())?;
+                    write!(f, ", {}", v.as_ref().value())?;
                 }
                 write!(f, "]")
             }
@@ -38,10 +38,10 @@ impl Display for Value {
                 write!(f, "{{")?;
                 let mut values = m.iter();
                 if let Some((k, v)) = values.next() {
-                    write!(f, "{k}: {v}", v = v.as_ref().0.borrow())?;
+                    write!(f, "{k}: {v}", v = v.as_ref().value())?;
                 }
                 for (k, v) in m {
-                    write!(f, ", {k}: {v}", v = v.as_ref().0.borrow())?;
+                    write!(f, ", {k}: {v}", v = v.as_ref().value())?;
                 }
                 write!(f, "}}")
             }
@@ -51,6 +51,7 @@ impl Display for Value {
 
 #[derive(Debug, Clone)]
 #[repr(transparent)]
+/// A non-none reference counted value
 pub struct GcBox(NonNull<RefCell<Value>>);
 
 impl Drop for GcBox {
@@ -66,7 +67,7 @@ const _: () = assert!(core::mem::size_of::<GcRef>() == core::mem::size_of::<usiz
 
 impl GcBox {
     pub fn as_ref<'s>(&'s self) -> GcRef<'s> {
-        GcRef(unsafe { self.0.as_ref() })
+        GcRef(Some(unsafe { self.0.as_ref() }))
     }
 }
 
@@ -103,18 +104,34 @@ impl From<bool> for GcBox {
 #[derive(Debug, Clone)]
 #[repr(transparent)]
 // SAFETY: A GcRef may only be created via the as_ref method on GcBox
-pub struct GcRef<'a>(pub &'a RefCell<Value>);
+/// A possibly None gc-tracked value. Bit-equivalent to Option<GcBox>
+pub struct GcRef<'a>(pub Option<&'a RefCell<Value>>);
 
 impl GcRef<'_> {
     pub unsafe fn new_box_noincrement(&self) -> Rc<RefCell<Value>> {
+        let Some(rc) = self.0 else {
+            panic!("Attempted to construct a GcBox from a None GcRef")
+        };
         // This creates a new Rc without incrementing the refcount
-        unsafe { Rc::from_raw(core::ptr::from_ref(self.0)) }
+        unsafe { Rc::from_raw(core::ptr::from_ref(rc)) }
     }
 
     pub fn new_box(&self) -> GcBox {
         let rc = unsafe { self.new_box_noincrement() };
 
         GcBox(unsafe { NonNull::new_unchecked(Rc::into_raw(rc).cast_mut()) })
+    }
+
+    pub fn value(&self) -> std::cell::Ref<'_, Value> {
+        self.0
+            .expect("Attempted to access the value of a null GcRef")
+            .borrow()
+    }
+
+    pub fn value_mut(&self) -> std::cell::RefMut<'_, Value> {
+        self.0
+            .expect("Attempted to access the value of a null GcRef")
+            .borrow_mut()
     }
 }
 

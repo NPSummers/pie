@@ -21,4 +21,5 @@ def void main() {
     std::print("foo");
     std::print(2.5 + 2.0);
     std::print(true);
+    std::print(1 / 0);
 }
