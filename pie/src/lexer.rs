@@ -99,7 +99,7 @@ pub enum Token<'s> {
     #[regex(r"\.\d+", |lex| lex.slice().parse().ok())]
     #[regex(r"\d+\.\d+", |lex| lex.slice().parse().ok())]
     FloatLit(f64),
-    #[regex("'\\?[^']'", (|lex: &mut Lexer<'_>| -> Option<char> {
+    #[regex(r"'\\?[^']'", (|lex: &mut Lexer<'_>| -> Option<char> {
         let text = lex.slice();
         let text = &text[1..text.len() - 1];
         let mut chars = text.chars();
