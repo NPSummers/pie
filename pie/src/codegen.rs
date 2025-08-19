@@ -45,11 +45,12 @@ impl<'ctx> CodeGen<'ctx> {
             let Item::Module(m) = item else {
                 continue;
             };
-            walk_items(&[], m, (), &mut |_, _, item| {
+            walk_items(&[], m, (), &mut |_, prefix, item| {
                 let ModuleItem::Function(f) = &item else {
                     return;
                 };
-                self.compile_function(m.name, f);
+                let mpath = prefix.join("__");
+                self.compile_function(&mpath, f);
             })
         }
 

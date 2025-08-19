@@ -1,6 +1,12 @@
 use pie/std;
 
 module demo {
+    module nested {
+        def string get_question() {
+            return "?";
+        }
+    }
+
     def int get_answer() {
         return 42;
     }
@@ -18,8 +24,11 @@ def void main() {
     
     let int meaning = demo::get_meaning();
     std::print(meaning);
+
+    let string question = demo::nested::get_question();
+    std::print(question);
+
     std::print("foo");
     std::print(2.5 + 2.0);
     std::print(true);
-    std::print(1 / 0);
 }
