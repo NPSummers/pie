@@ -80,6 +80,10 @@ pub enum Statement<'s> {
         var: &'s str,
         body: Vec<Statement<'s>>,
     },
+    While {
+        cond: Expression<'s>,
+        body: Vec<Statement<'s>>,
+    },
     Let {
         typ: TypeName<'s>,
         name: &'s str,
@@ -100,12 +104,19 @@ pub enum BinaryOp {
     Div,
     Add,
     Sub,
+    Eq,
+    LtEq,
+    GtEq,
+    Ne,
+    Lt,
+    Gt,
 }
 
 impl BinaryOp {
     pub fn precedence(&self) -> u16 {
         use BinaryOp::*;
         match self {
+            Lt | LtEq | Gt | GtEq | Ne | Eq => 0,
             Add | Sub => 10,
             Mul | Div => 20,
         }

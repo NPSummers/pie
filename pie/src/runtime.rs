@@ -17,6 +17,43 @@ pub enum Value {
     Iterator(Box<dyn DebugIter>),
 }
 
+impl PartialEq for Value {
+    fn eq(&self, other: &Self) -> bool {
+        use Value::*;
+        match (self, other) {
+            (Int(a), Int(b)) => a == b,
+            (Float(a), Float(b)) => a == b,
+            (Bool(a), Bool(b)) => a == b,
+            (Str(a), Str(b)) => a == b,
+            (List(a), List(b)) if a.len() == b.len() => a.iter().eq(b.iter()),
+            (Map(a), Map(b)) if a.len() == b.len() => {
+                for (k, v) in a {
+                    if b.get(k) != Some(v) {
+                        return false;
+                    }
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+}
+
+impl PartialOrd for Value {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        use Value::*;
+        match (self, other) {
+            (Int(a), Int(b)) => a.partial_cmp(b),
+            (Float(a), Float(b)) => a.partial_cmp(b),
+            (Bool(a), Bool(b)) => a.partial_cmp(b),
+            (Str(a), Str(b)) => a.partial_cmp(b),
+            (List(a), List(b)) => a.len().partial_cmp(&b.len()),
+            (Map(a), Map(b)) => a.len().partial_cmp(&b.len()),
+            _ => None,
+        }
+    }
+}
+
 impl Clone for Value {
     fn clone(&self) -> Self {
         use Value::*;
@@ -92,6 +129,12 @@ const _: () = assert!(core::mem::size_of::<GcBox>() == core::mem::size_of::<usiz
 const _: () = assert!(core::mem::size_of::<Option<GcBox>>() == core::mem::size_of::<usize>());
 const _: () = assert!(core::mem::size_of::<GcRef>() == core::mem::size_of::<usize>());
 
+impl PartialEq for GcBox {
+    fn eq(&self, other: &Self) -> bool {
+        *self.as_ref().value() == *other.as_ref().value()
+    }
+}
+
 impl GcBox {
     pub fn as_ref<'s>(&'s self) -> GcRef<'s> {
         GcRef(Some(unsafe { self.0.as_ref() }))
@@ -141,6 +184,10 @@ impl From<bool> for GcBox {
 pub struct GcRef<'a>(pub Option<&'a RefCell<Value>>);
 
 impl GcRef<'_> {
+    pub fn new_null() -> Self {
+        Self(None)
+    }
+
     pub fn is_null(&self) -> bool {
         self.0.is_none()
     }

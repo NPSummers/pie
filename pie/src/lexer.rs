@@ -138,6 +138,18 @@ pub enum Token<'s> {
     Ident(&'s str),
 
     // multi-char punctuation
+    #[token("==")]
+    /// ==
+    EqEq,
+    #[token("!=")]
+    /// ==
+    Ne,
+    #[token("<=")]
+    /// ==
+    LtEq,
+    #[token(">=")]
+    /// ==
+    GtEq,
     #[token("+=")]
     /// +=
     PlusEq,
@@ -152,6 +164,12 @@ pub enum Token<'s> {
     SlashEq,
 
     // single-char tokens
+    #[token("<")]
+    /// <
+    Lt,
+    #[token(">")]
+    /// >
+    Gt,
     #[token("+")]
     /// +
     Plus,

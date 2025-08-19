@@ -38,34 +38,33 @@ pie_native_fn!(pie_iter_next(iter: GcRef) pie "std::iter::next"[Any] => Any -> O
 
 #[derive(Debug)]
 // A wrapper that allows holding a reference to variant of a Value in a GcBox
-struct BorrowWrapper<MapFn, Inner: 'static> {
+struct BorrowWrapper<Inner: 'static> {
     rc: Rc<RefCell<Value>>,
-    map_fn: MapFn,
+    map_fn: for<'a> fn(&'a Value) -> &'a Inner,
     // This borrow ensures that the Value cannot be mutably borrowed while the reference to it exists
     // The 'static lifetime is valid here as it points to the Rc above
     borrow: Ref<'static, Inner>,
 }
 
-impl<MapFn: FnMut(&Value) -> &Inner + Clone, Inner> Clone for BorrowWrapper<MapFn, Inner> {
+impl<Inner> Clone for BorrowWrapper<Inner> {
     fn clone(&self) -> Self {
         let rc = self.rc.clone();
-        let map_fn = self.map_fn.clone();
-        BorrowWrapper::new(rc, map_fn)
+        BorrowWrapper::new(rc, self.map_fn)
     }
 }
 
-impl<MapFn: FnMut(&Value) -> &Inner + Clone, Inner> BorrowWrapper<MapFn, Inner> {
-    pub fn new(rc: Rc<RefCell<Value>>, map_fn: MapFn) -> Self {
+impl<Inner> BorrowWrapper<Inner> {
+    pub fn new(rc: Rc<RefCell<Value>>, map_fn: fn(&Value) -> &Inner) -> Self {
         let borrow = rc.borrow();
-        let borrow: Ref<'_, Inner> = Ref::map(borrow, map_fn.clone());
+        let borrow: Ref<'_, Inner> = Ref::map(borrow, map_fn);
         // SAFETY: Erase the lifetime of borrow
         // This is safe as it points to the RefCell in Rc, which means it cannot move while the Rc
         // exists
         let borrow: Ref<'static, Inner> = unsafe { core::mem::transmute(borrow) };
         BorrowWrapper { rc, borrow, map_fn }
     }
-    pub fn get_ref<'s>(&'s self) -> &'s Inner {
-        let r: &Inner = &*self.borrow;
+    pub fn get_ref(&self) -> &Inner {
+        let r: &Inner = &self.borrow;
         // SAFETY: Erase the lifetime of borrow
         // This is safe as it points to the RefCell in Rc, which means it cannot move while the Rc
         // exists
@@ -76,7 +75,7 @@ impl<MapFn: FnMut(&Value) -> &Inner + Clone, Inner> BorrowWrapper<MapFn, Inner> 
     /// Tracking that the lifetime of this borrow is not held beyond the lifetime of the
     /// underlying value is left up to the caller
     pub unsafe fn get_static_ref(&self) -> &'static Inner {
-        let r: &Inner = &*self.borrow;
+        let r: &Inner = &self.borrow;
         // SAFETY: Erase the lifetime of borrow
         // Tracking that the lifetime of this borrow is not held beyond the lifetime of the
         // underlying value is up to the caller
@@ -86,14 +85,14 @@ impl<MapFn: FnMut(&Value) -> &Inner + Clone, Inner> BorrowWrapper<MapFn, Inner> 
 
 #[derive(Debug, Clone)]
 struct MapIter {
-    borrow: BorrowWrapper<fn(&Value) -> &HashMap<String, GcBox>, HashMap<String, GcBox>>,
+    borrow: BorrowWrapper<HashMap<String, GcBox>>,
     iter: std::collections::hash_map::Iter<'static, String, GcBox>,
 }
 
 impl MapIter {
     pub fn new(rc: Rc<RefCell<Value>>) -> Option<Self> {
         fn get_map(v: &Value) -> &HashMap<String, GcBox> {
-            let Value::Map(m) = &*v else { unreachable!() };
+            let Value::Map(m) = v else { unreachable!() };
             m
         }
         // Ensure the Value is a Map
@@ -123,14 +122,14 @@ impl Iterator for MapIter {
 
 #[derive(Debug, Clone)]
 struct ListIter {
-    borrow: BorrowWrapper<fn(&Value) -> &Vec<GcBox>, Vec<GcBox>>,
+    borrow: BorrowWrapper<Vec<GcBox>>,
     iter: std::slice::Iter<'static, GcBox>,
 }
 
 impl ListIter {
     pub fn new(rc: Rc<RefCell<Value>>) -> Option<Self> {
         fn get_list(v: &Value) -> &Vec<GcBox> {
-            let Value::List(l) = &*v else { unreachable!() };
+            let Value::List(l) = v else { unreachable!() };
             l
         }
         // Ensure the Value is a List
@@ -157,14 +156,14 @@ impl Iterator for ListIter {
 
 #[derive(Debug, Clone)]
 struct StringIter {
-    borrow: BorrowWrapper<fn(&Value) -> &String, String>,
+    borrow: BorrowWrapper<String>,
     iter: std::str::Chars<'static>,
 }
 
 impl StringIter {
     pub fn new(rc: Rc<RefCell<Value>>) -> Option<Self> {
         fn get_string(v: &Value) -> &String {
-            let Value::Str(v) = &*v else { unreachable!() };
+            let Value::Str(v) = &v else { unreachable!() };
             v
         }
         // Ensure the Value is a List

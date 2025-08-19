@@ -156,6 +156,16 @@ fn check_stmt<'s>(
             locals.insert(*name, declared);
             Ok(())
         }
+        Statement::While { cond, body } => {
+            let cond = infer_expr_type(cond, locals, modules, path)?;
+            if let Type::Function(_, _) | Type::Void = cond {
+                return Err(format!("invalid type for while loop condition: {cond:?}"));
+            };
+            for stmt in body {
+                check_stmt(modules, path, locals, func_ret, stmt)?;
+            }
+            Ok(())
+        }
         Statement::For {
             iterable,
             var,
@@ -261,6 +271,7 @@ fn binary_result_type(op: BinaryOp, lhs: &Type, rhs: &Type) -> Type {
             }
             Type::Any
         }
+        Lt | Gt | Eq | Ne | LtEq | GtEq => Type::Bool,
     }
 }
 

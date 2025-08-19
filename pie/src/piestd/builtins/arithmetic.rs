@@ -32,6 +32,49 @@ pie_native_fn!(pie_bool_new(v: bool) -> GcBox {
     v.into()
 });
 
+// Returns null if the provided value is not truthy, a valid GcRef(the one provided to it) otherwise
+pie_native_fn!(pie_internal_truthy(a: GcRef) -> GcRef {
+    use Value::*;
+    if a.is_null() {
+        return GcRef::new_null();
+    }
+    let val = a.value();
+    let bool_to_null = |b| if b {a.clone()} else {GcRef::new_null()};
+    bool_to_null(match &*val {
+        &Bool(b) => b,
+        &Int(i) => i != 0,
+        &Float(f) => f.is_finite() && f != 0.0,
+        List(l) => !l.is_empty(),
+        Map(m) => !m.is_empty(),
+        Str(s) =>  !s.is_empty(),
+        Iterator(_) => false,
+    })
+});
+
+pie_native_fn!(pie_eq(a: GcRef, b: GcRef) -> GcBox {
+    (*a.value() == *b.value()).into()
+});
+
+pie_native_fn!(pie_ne(a: GcRef, b: GcRef) -> GcBox {
+    (*a.value() != *b.value()).into()
+});
+
+pie_native_fn!(pie_lt(a: GcRef, b: GcRef) -> GcBox {
+    (*a.value() < *b.value()).into()
+});
+
+pie_native_fn!(pie_gt(a: GcRef, b: GcRef) -> GcBox {
+    (*a.value() > *b.value()).into()
+});
+
+pie_native_fn!(pie_gteq(a: GcRef, b: GcRef) -> GcBox {
+    (*a.value() >= *b.value()).into()
+});
+
+pie_native_fn!(pie_lteq(a: GcRef, b: GcRef) -> GcBox {
+    (*a.value() <= *b.value()).into()
+});
+
 pie_native_fn!(pie_add(a: GcRef, b: GcRef) -> Option<GcBox> {
     use Value::*;
     Some(match (&*a.value(), &*b.value()) {

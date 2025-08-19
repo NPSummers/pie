@@ -168,11 +168,6 @@ impl<'ctx> CodeGen<'ctx> {
                     .build_call(iter_new, &[iterable.into()], "iternew")
                     .expect("create call to create iterator");
                 let iterable = iterable.try_as_basic_value().left().unwrap();
-                // let iterable_alloca = self
-                //     .builder
-                //     .build_alloca(self.registry.ptr_type(), var)
-                //     .unwrap();
-                // self.builder.build_store(iterable_alloca, iterable).unwrap();
 
                 let loop_bb = self.context.append_basic_block(fnv, "for_loop");
                 self.builder.build_unconditional_branch(loop_bb).unwrap();
@@ -209,6 +204,39 @@ impl<'ctx> CodeGen<'ctx> {
                 self.builder.build_unconditional_branch(loop_bb).unwrap();
                 locals.remove(var);
                 self.builder.position_at_end(loop_after);
+                GeneratedStatement::Void
+            }
+            Statement::While { cond, body } => {
+                let while_bb = self.context.append_basic_block(fnv, "while_loop");
+                self.builder.build_unconditional_branch(while_bb).unwrap();
+                self.builder.position_at_end(while_bb);
+                let cond = self
+                    .codegen_expr(cond, locals)
+                    .expect("a non-void condition in a while loop");
+                let truthy = self.module.get_function("pie_internal_truthy").unwrap();
+                let truthy = self
+                    .builder
+                    .build_call(truthy, &[cond.into()], "while_cond_truthy")
+                    .unwrap()
+                    .try_as_basic_value()
+                    .left()
+                    .unwrap()
+                    .into_pointer_value();
+                let is_false = self
+                    .builder
+                    .build_is_null(truthy, "while_is_false")
+                    .unwrap();
+                let while_then = self.context.append_basic_block(fnv, "while_loop_then");
+                let while_after = self.context.append_basic_block(fnv, "while_loop_after");
+                self.builder
+                    .build_conditional_branch(is_false, while_after, while_then)
+                    .unwrap();
+                self.builder.position_at_end(while_then);
+                for stmt in body {
+                    self.codegen_stmt(locals, func, fnv, stmt);
+                }
+                self.builder.build_unconditional_branch(while_bb).unwrap();
+                self.builder.position_at_end(while_after);
                 GeneratedStatement::Void
             }
             Statement::Let {
@@ -387,6 +415,12 @@ impl<'ctx> CodeGen<'ctx> {
                     BinaryOp::Sub => "pie_sub",
                     BinaryOp::Mul => "pie_mul",
                     BinaryOp::Div => "pie_div",
+                    BinaryOp::Eq => "pie_eq",
+                    BinaryOp::Ne => "pie_ne",
+                    BinaryOp::Lt => "pie_lt",
+                    BinaryOp::Gt => "pie_gt",
+                    BinaryOp::LtEq => "pie_lteq",
+                    BinaryOp::GtEq => "pie_gteq",
                 };
 
                 let f = self.module.get_function(fn_name).unwrap();
