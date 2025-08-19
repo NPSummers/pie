@@ -304,6 +304,12 @@ impl<'s> Parser<'s> {
                         panic!("Expected a name in function definition")
                     };
                     params.push((typ, name));
+                    if !self.consume_if(|t| matches!(t, Token::Comma)) {
+                        if !self.consume_if(|t| matches!(t, Token::RParen)) {
+                            panic!("Expected a ) after parameters in function definition")
+                        }
+                        break;
+                    };
                 }
                 let Some(Token::LBrace) = self.advance() else {
                     panic!("Expected an {{ after function definition")
