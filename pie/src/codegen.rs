@@ -196,7 +196,7 @@ impl<'ctx> CodeGen<'ctx> {
                                     .expect("call");
                                 call.try_as_basic_value().left().unwrap()
                             }
-                            _ => value_val, // For unknown operators, just store the value
+                            AssignOp::Assign => value_val,
                         };
 
                         // Store the result back to the target
@@ -288,16 +288,13 @@ impl<'ctx> CodeGen<'ctx> {
                     BinaryOp::Div => "pie_div",
                 };
 
-                if let Some(f) = self.module.get_function(fn_name) {
-                    let call = self
-                        .builder
-                        .build_call(f, &[left_val.into(), right_val.into()], "binop")
-                        .expect("call");
-                    if call.try_as_basic_value().left().is_some() {
-                        return Some(call.try_as_basic_value().left().unwrap());
-                    }
-                }
-                None
+                let f = self.module.get_function(fn_name).unwrap();
+
+                let call = self
+                    .builder
+                    .build_call(f, &[left_val.into(), right_val.into()], "binop")
+                    .expect("call");
+                call.try_as_basic_value().left()
             }
             Expression::Call { callee, args } => {
                 match &**callee {
@@ -337,7 +334,7 @@ impl<'ctx> CodeGen<'ctx> {
                                 return Some(ret_val);
                             }
                         }
-                        todo!()
+                        panic!("Attempted to call an unknown function {fname}")
                     }
                     Expression::Ident(fname) => {
                         if let Some(f) = self.functions.get(*fname) {
@@ -357,7 +354,7 @@ impl<'ctx> CodeGen<'ctx> {
                                 return Some(call.try_as_basic_value().left().unwrap());
                             }
                         }
-                        None
+                        panic!("Attempted to call a function {fname} that could not be found")
                     }
                     expr => panic!("Codegen for {expr:#?} has not been implemented yet"),
                 }
