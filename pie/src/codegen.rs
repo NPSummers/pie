@@ -267,15 +267,14 @@ impl<'ctx> CodeGen<'ctx> {
                 Some(call.try_as_basic_value().left().unwrap())
             }
             Expression::Ident(name) => {
-                if let Some(ptr) = locals.get(name) {
-                    let loaded = self
-                        .builder
-                        .build_load(ptr_type, *ptr, &format!("load_{}", name))
-                        .expect("load");
-                    Some(loaded)
-                } else {
-                    None
-                }
+                let Some(ptr) = locals.get(name) else {
+                    panic!("Attempted to codegen a load to non-existing ident {name}")
+                };
+                let loaded = self
+                    .builder
+                    .build_load(ptr_type, *ptr, &format!("load_{}", name))
+                    .expect("load");
+                Some(loaded)
             }
             Expression::Binary(lhs, op, rhs) => {
                 // evaluate both sides
@@ -303,196 +302,124 @@ impl<'ctx> CodeGen<'ctx> {
             Expression::Call { callee, args } => {
                 match &**callee {
                     Expression::ModuleAccess { components } => {
-                        let module = components[0];
-                        let name = components[1];
-                        // support std namespace with chained names like "map::new" etc.
-                        if module == "std" {
-                            // handle simple std functions first
-                            if name == "print" {
-                                if args.len() == 1 {
-                                    if let Some(argv) = self.codegen_expr(&args[0], locals) {
-                                        let fn_print =
-                                            self.module.get_function("pie_print").unwrap();
-                                        let _ = self
-                                            .builder
-                                            .build_call(fn_print, &[argv.into()], "print")
-                                            .expect("call");
-                                    }
-                                }
-                                return None;
-                            }
-                            if name == "to_string" {
-                                if args.len() == 1 {
-                                    if let Some(argv) = self.codegen_expr(&args[0], locals) {
-                                        let fn_to_string =
-                                            self.module.get_function("pie_to_string").unwrap();
-                                        let call = self
-                                            .builder
-                                            .build_call(fn_to_string, &[argv.into()], "to_str")
-                                            .expect("call");
-                                        return Some(call.try_as_basic_value().left().unwrap());
-                                    }
-                                }
-                                return None;
-                            }
-
-                            let parts: Vec<&str> = name.split("::").collect();
-                            if parts.len() == 2 && parts[0] == "map" && parts[1] == "new" {
-                                let fn_map_new = self.module.get_function("pie_map_new").unwrap();
-                                let call = self
-                                    .builder
-                                    .build_call(fn_map_new, &[], "map_new")
-                                    .expect("call");
-                                return Some(call.try_as_basic_value().left().unwrap());
-                            }
-                            if parts.len() == 2 && parts[0] == "list" && parts[1] == "new" {
-                                let fn_list_new = self.module.get_function("pie_list_new").unwrap();
-                                let call = self
-                                    .builder
-                                    .build_call(fn_list_new, &[], "list_new")
-                                    .expect("call");
-                                return Some(call.try_as_basic_value().left().unwrap());
-                            }
-                            if parts.len() == 2 && parts[0] == "http" && parts[1] == "get" {
-                                if args.len() == 1 {
-                                    if let Some(argv) = self.codegen_expr(&args[0], locals) {
-                                        let fn_http =
-                                            self.module.get_function("pie_http_get").unwrap();
-                                        let null = ptr_type.const_null();
-                                        let call = self
-                                            .builder
-                                            .build_call(
-                                                fn_http,
-                                                &[argv.into(), null.into()],
-                                                "http_get",
-                                            )
-                                            .expect("call");
-                                        return Some(call.try_as_basic_value().left().unwrap());
-                                    }
-                                } else if args.len() == 2 {
-                                    if let Some(argv) = self.codegen_expr(&args[0], locals) {
-                                        if let Some(hv) = self.codegen_expr(&args[1], locals) {
-                                            let fn_http =
-                                                self.module.get_function("pie_http_get").unwrap();
-                                            let call = self
-                                                .builder
-                                                .build_call(
-                                                    fn_http,
-                                                    &[argv.into(), hv.into()],
-                                                    "http_get",
-                                                )
-                                                .expect("call");
-                                            return Some(call.try_as_basic_value().left().unwrap());
-                                        }
-                                    }
-                                }
-                                return None;
-                            }
-                        }
-
-                        // If `module` is a local variable, treat as method call: `var::method(...)`
-                        if locals.contains_key(module) {
-                            let var_ptr = locals.get(module).unwrap();
-                            let loaded = self
-                                .builder
-                                .build_load(ptr_type, *var_ptr, &format!("load_{}", module))
-                                .expect("load");
-                            // map methods
-                            if name == "set" {
-                                // expects (key, val) -> call pie_map_set(map, key, val)
-                                let mut compiled_args = Vec::new();
-                                compiled_args.push(loaded.into());
-                                if !args.is_empty() {
-                                    if let Some(a0) = self.codegen_expr(&args[0], locals) {
-                                        compiled_args.push(a0.into());
-                                    } else {
-                                        compiled_args.push(ptr_type.const_null().into());
-                                    }
-                                } else {
-                                    compiled_args.push(ptr_type.const_null().into());
-                                }
-                                if args.len() >= 2 {
-                                    if let Some(a1) = self.codegen_expr(&args[1], locals) {
-                                        compiled_args.push(a1.into());
-                                    } else {
-                                        compiled_args.push(ptr_type.const_null().into());
-                                    }
-                                } else {
-                                    compiled_args.push(ptr_type.const_null().into());
-                                }
-                                let fn_map_set = self.module.get_function("pie_map_set").unwrap();
-                                let _ = self
-                                    .builder
-                                    .build_call(fn_map_set, &compiled_args, "map_set")
-                                    .expect("call");
-                                return None;
-                            }
-                            if name == "get" {
-                                let mut compiled_args = Vec::new();
-                                compiled_args.push(loaded.into());
-                                if !args.is_empty() {
-                                    if let Some(a0) = self.codegen_expr(&args[0], locals) {
-                                        compiled_args.push(a0.into());
-                                    } else {
-                                        compiled_args.push(ptr_type.const_null().into());
-                                    }
-                                } else {
-                                    compiled_args.push(ptr_type.const_null().into());
-                                }
-                                let fn_map_get = self.module.get_function("pie_map_get").unwrap();
-                                let call = self
-                                    .builder
-                                    .build_call(fn_map_get, &compiled_args, "map_get")
-                                    .expect("call");
-                                if call.try_as_basic_value().left().is_some() {
-                                    return Some(call.try_as_basic_value().left().unwrap());
-                                }
-                                return None;
-                            }
-                            // list methods
-                            if name == "push" {
-                                let mut compiled_args = Vec::new();
-                                compiled_args.push(loaded.into());
-                                if !args.is_empty() {
-                                    if let Some(a0) = self.codegen_expr(&args[0], locals) {
-                                        compiled_args.push(a0.into());
-                                    } else {
-                                        compiled_args.push(ptr_type.const_null().into());
-                                    }
-                                } else {
-                                    compiled_args.push(ptr_type.const_null().into());
-                                }
-                                let fn_list_push =
-                                    self.module.get_function("pie_list_push").unwrap();
-                                let _ = self
-                                    .builder
-                                    .build_call(fn_list_push, &compiled_args, "list_push")
-                                    .expect("call");
-                                return None;
-                            }
-                        }
-
-                        // fallback: module function lookup (module::name -> module__name)
-                        let fname = format!("{}__{}", module, name.replace("::", "__"));
-                        if let Some(f) = self.functions.get(&fname) {
-                            let mut compiled_args = Vec::new();
-                            for a in args {
-                                if let Some(av) = self.codegen_expr(a, locals) {
-                                    compiled_args.push(av.into());
-                                } else {
-                                    compiled_args.push(ptr_type.const_null().into());
-                                }
-                            }
+                        if let Some(native_func) = self.registry.get_by_std_path(components) {
+                            let llvm_func =
+                                self.module.get_function(native_func.native_name).unwrap();
+                            let args: Vec<_> = args
+                                .iter()
+                                .map(|e| self.codegen_expr(e, locals).unwrap().into())
+                                .collect();
                             let call = self
                                 .builder
-                                .build_call(*f, &compiled_args, "call")
+                                .build_call(llvm_func, &args, &components.join("__"))
                                 .expect("call");
-                            if call.try_as_basic_value().left().is_some() {
-                                let ret_val = call.try_as_basic_value().left().unwrap();
-                                return Some(ret_val);
-                            }
+                            return call.try_as_basic_value().left();
                         }
-                        None
+
+                        // // If `module` is a local variable, treat as method call: `var::method(...)`
+                        // if locals.contains_key(module) {
+                        //     let var_ptr = locals.get(module).unwrap();
+                        //     let loaded = self
+                        //         .builder
+                        //         .build_load(ptr_type, *var_ptr, &format!("load_{}", module))
+                        //         .expect("load");
+                        //     // map methods
+                        //     if name == "set" {
+                        //         // expects (key, val) -> call pie_map_set(map, key, val)
+                        //         let mut compiled_args = Vec::new();
+                        //         compiled_args.push(loaded.into());
+                        //         if !args.is_empty() {
+                        //             if let Some(a0) = self.codegen_expr(&args[0], locals) {
+                        //                 compiled_args.push(a0.into());
+                        //             } else {
+                        //                 compiled_args.push(ptr_type.const_null().into());
+                        //             }
+                        //         } else {
+                        //             compiled_args.push(ptr_type.const_null().into());
+                        //         }
+                        //         if args.len() >= 2 {
+                        //             if let Some(a1) = self.codegen_expr(&args[1], locals) {
+                        //                 compiled_args.push(a1.into());
+                        //             } else {
+                        //                 compiled_args.push(ptr_type.const_null().into());
+                        //             }
+                        //         } else {
+                        //             compiled_args.push(ptr_type.const_null().into());
+                        //         }
+                        //         let fn_map_set = self.module.get_function("pie_map_set").unwrap();
+                        //         let _ = self
+                        //             .builder
+                        //             .build_call(fn_map_set, &compiled_args, "map_set")
+                        //             .expect("call");
+                        //         return None;
+                        //     }
+                        //     if name == "get" {
+                        //         let mut compiled_args = Vec::new();
+                        //         compiled_args.push(loaded.into());
+                        //         if !args.is_empty() {
+                        //             if let Some(a0) = self.codegen_expr(&args[0], locals) {
+                        //                 compiled_args.push(a0.into());
+                        //             } else {
+                        //                 compiled_args.push(ptr_type.const_null().into());
+                        //             }
+                        //         } else {
+                        //             compiled_args.push(ptr_type.const_null().into());
+                        //         }
+                        //         let fn_map_get = self.module.get_function("pie_map_get").unwrap();
+                        //         let call = self
+                        //             .builder
+                        //             .build_call(fn_map_get, &compiled_args, "map_get")
+                        //             .expect("call");
+                        //         if call.try_as_basic_value().left().is_some() {
+                        //             return Some(call.try_as_basic_value().left().unwrap());
+                        //         }
+                        //         return None;
+                        //     }
+                        //     // list methods
+                        //     if name == "push" {
+                        //         let mut compiled_args = Vec::new();
+                        //         compiled_args.push(loaded.into());
+                        //         if !args.is_empty() {
+                        //             if let Some(a0) = self.codegen_expr(&args[0], locals) {
+                        //                 compiled_args.push(a0.into());
+                        //             } else {
+                        //                 compiled_args.push(ptr_type.const_null().into());
+                        //             }
+                        //         } else {
+                        //             compiled_args.push(ptr_type.const_null().into());
+                        //         }
+                        //         let fn_list_push =
+                        //             self.module.get_function("pie_list_push").unwrap();
+                        //         let _ = self
+                        //             .builder
+                        //             .build_call(fn_list_push, &compiled_args, "list_push")
+                        //             .expect("call");
+                        //         return None;
+                        //     }
+                        // }
+
+                        // // fallback: module function lookup (module::name -> module__name)
+                        // let fname = format!("{}__{}", module, name.replace("::", "__"));
+                        // if let Some(f) = self.functions.get(&fname) {
+                        //     let mut compiled_args = Vec::new();
+                        //     for a in args {
+                        //         if let Some(av) = self.codegen_expr(a, locals) {
+                        //             compiled_args.push(av.into());
+                        //         } else {
+                        //             compiled_args.push(ptr_type.const_null().into());
+                        //         }
+                        //     }
+                        //     let call = self
+                        //         .builder
+                        //         .build_call(*f, &compiled_args, "call")
+                        //         .expect("call");
+                        //     if call.try_as_basic_value().left().is_some() {
+                        //         let ret_val = call.try_as_basic_value().left().unwrap();
+                        //         return Some(ret_val);
+                        //     }
+                        // }
+                        // None
+                        todo!()
                     }
                     Expression::Ident(fname) => {
                         if let Some(f) = self.functions.get(*fname) {
