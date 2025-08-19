@@ -13,7 +13,7 @@ module calculator {
 }
 
 module main {
-    def int run() {
+    def int main() {
         let int x = 10;
         let int y = 5;
         
