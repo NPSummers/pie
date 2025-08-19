@@ -72,6 +72,9 @@ pub enum Token<'s> {
     #[token("for")]
     /// for
     For,
+    #[token("in")]
+    /// in
+    In,
     #[token("while")]
     /// while
     While,
@@ -84,6 +87,12 @@ pub enum Token<'s> {
     #[token("return")]
     /// return
     Return,
+    #[token("break")]
+    /// break
+    Break,
+    #[token("continue")]
+    /// continue
+    Continue,
 
     // literals
     #[token("true", |_| true)]

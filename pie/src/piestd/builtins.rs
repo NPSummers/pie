@@ -8,6 +8,7 @@ use inkwell::{
 };
 mod arithmetic;
 mod io;
+mod iter;
 mod list;
 mod map;
 mod rc;
@@ -158,11 +159,13 @@ impl<'ctx> Registry<'ctx> {
         };
     }
     pub fn register_builtins(&mut self) {
+        rc::register(self);
         string::register(self);
         arithmetic::register(self);
         map::register(self);
         list::register(self);
         io::register(self);
+        iter::register(self);
     }
     pub fn functions(&self) -> impl Iterator<Item = &NativeFunction<'ctx>> {
         self.functions.values().map(|v| v.as_ref())

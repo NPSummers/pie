@@ -56,8 +56,11 @@ fn main() -> anyhow::Result<()> {
     cg.compile_program(&prog)
         .map_err(|e| anyhow::anyhow!("compilation error: {}", e))?;
 
+<<<<<<< HEAD
     // cg.module.print_to_stderr();
 
+=======
+>>>>>>> d53e0a9 (Implement for loops)
     // JIT compile and execute
     let ee = cg
         .module

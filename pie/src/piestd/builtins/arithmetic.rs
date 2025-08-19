@@ -86,7 +86,7 @@ pie_native_fn!(pie_unary_add(val: GcRef) -> Option<GcBox> {
         &Float(f) => f.into(),
         Str(s) => return s.parse::<i64>().ok().map(GcBox::from),
         &Bool(b) => (b as i64).into(),
-        List(_) | Map(_) => return None
+        _ => return None,
     })
 });
 
@@ -97,7 +97,7 @@ pie_native_fn!(pie_unary_sub(val: GcRef) -> Option<GcBox> {
         &Float(f) => f.neg().into(),
         Str(s) => return s.parse::<i64>().ok().map(Neg::neg).map(GcBox::from),
         &Bool(b) => (b as i64).neg().into(),
-        List(_) | Map(_) => return None
+        _ => return None,
     })
 });
 
@@ -109,6 +109,7 @@ pie_native_fn!(pie_unary_not(val: GcRef) -> Option<GcBox> {
         Str(s) => s.is_empty().into(),
         &Bool(b) => (!b).into(),
         List(l) => l.is_empty().into(),
-        Map(m) => m.is_empty().into()
+        Map(m) => m.is_empty().into(),
+        Iterator(_) => return None,
     })
 });
