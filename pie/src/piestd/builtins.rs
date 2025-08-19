@@ -41,6 +41,10 @@ pub struct Registry<'ctx> {
 macro_rules! pie_native_fn {
     (unsafe $name:ident($($param:ident : $ty:ty),*) $(pie $path:literal[$($piety:ident),*] $(=> $pieret:ident)?)? $(-> $ret:ty)? $body:block ) => {
     ::paste::paste! {
+        #[::linkme::distributed_slice(crate::piestd::builtins::REGISTRATION_FUNCTIONS)]
+        #[allow(non_upper_case_globals)]
+        static [<$name _register_distslice>]: fn(&mut Registry<'_>) = [<$name _register>];
+
         fn [<$name _register>]<'ctx>(reg: &mut crate::piestd::builtins::Registry<'ctx>) {
             #[allow(unused_imports)]
             use ::inkwell::types::{BasicType, BasicMetadataTypeEnum};
