@@ -5,21 +5,6 @@ use crate::{
     runtime::{GcBox, GcRef, Value},
 };
 
-pub fn register(reg: &mut Registry) {
-    pie_int_new_register(reg);
-    pie_float_new_register(reg);
-    pie_bool_new_register(reg);
-
-    pie_add_register(reg);
-    pie_sub_register(reg);
-    pie_mul_register(reg);
-    pie_div_register(reg);
-
-    pie_unary_add_register(reg);
-    pie_unary_sub_register(reg);
-    pie_unary_not_register(reg);
-}
-
 pie_native_fn!(pie_int_new(v: i64) -> GcBox {
     v.into()
 });

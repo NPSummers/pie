@@ -228,6 +228,12 @@ impl<'s> Parser<'s> {
                 Token::Minus => BinaryOp::Sub,
                 Token::Star => BinaryOp::Mul,
                 Token::Slash => BinaryOp::Div,
+                Token::Eq => BinaryOp::Eq,
+                Token::Ne => BinaryOp::Ne,
+                Token::Gt => BinaryOp::Gt,
+                Token::Lt => BinaryOp::Lt,
+                Token::GtEq => BinaryOp::GtEq,
+                Token::LtEq => BinaryOp::LtEq,
                 _ => break,
             };
             let prec = op.precedence();

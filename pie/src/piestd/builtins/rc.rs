@@ -5,13 +5,6 @@ use crate::{
     runtime::{GcBox, GcRef},
 };
 
-pub fn register(reg: &mut Registry) {
-    pie_is_null_register(reg);
-
-    pie_inc_ref_register(reg);
-    pie_dec_ref_register(reg);
-}
-
 pie_native_fn!(pie_is_null(p: GcRef) pie "std::is_null"[Any] => Bool -> GcBox {
     GcBox::from(p.is_null())
 });

@@ -5,12 +5,6 @@ use crate::{
     runtime::{GcBox, GcRef, Value},
 };
 
-pub fn register(reg: &mut Registry) {
-    pie_map_new_register(reg);
-    pie_map_set_register(reg);
-    pie_map_get_register(reg);
-}
-
 pie_native_fn!(pie_map_new() pie "std::map::new"[] => Map -> GcBox {
     GcBox::new(Value::Map(HashMap::new()))
 });

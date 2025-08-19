@@ -3,11 +3,6 @@ use crate::{
     runtime::{GcBox, GcRef, Value},
 };
 
-pub fn register(reg: &mut Registry) {
-    pie_print_register(reg);
-    pie_http_get_register(reg);
-}
-
 pie_native_fn!(pie_print(val: GcRef) pie "std::print"[Any] {
     println!("{}", val.value())
 });

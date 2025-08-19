@@ -9,11 +9,6 @@ use crate::{
     runtime::{DebugIter, GcBox, GcRef, Value},
 };
 
-pub fn register(reg: &mut Registry) {
-    pie_iter_new_register(reg);
-    pie_iter_next_register(reg);
-}
-
 pie_native_fn!(pie_iter_new(iterable: GcRef) pie "std::iter::new"[Any] => Any -> Option<GcBox> {
     let val = iterable.new_rc();
     use Value::*;
