@@ -1,5 +1,22 @@
-# PIE language experiments
+<div align="center">
+    <img src="./res/pie.png" height=300>
+    <h1>The Pie Programming Language</h1>
 
-This repository will hold experiments building a small custom PIE language.
+[**Quick Start**](#quick-start) | [**Contributing**](#contributing) | [**License**](#license)
 
-Start with the `pie/` crate.
+</div>
+
+> [!IMPORTANT]
+> Pie is in early alpha and still in development; breaking bugs and missing features should be expected.
+
+## Quick Start
+
+//TODO
+
+## Contributing
+
+Contributions are welcome, but please make sure you clarify with me before submitting a pull request. You can contact me via my discord `_nonnewport_`.
+
+## License
+
+Pie is distributed under the [MIT](./LICENSE) license.
