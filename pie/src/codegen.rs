@@ -315,6 +315,23 @@ impl<'ctx> CodeGen<'ctx> {
                     .expect("call");
                 call.try_as_basic_value().left()
             }
+            Expression::Unary(op, expr) => {
+                let val = self
+                    .codegen_expr(expr, locals)
+                    .expect("right hand side of a unary expression to be non-void");
+                let fn_name = match op {
+                    UnaryOp::Add => "pie_unary_add",
+                    UnaryOp::Sub => "pie_unary_sub",
+                    UnaryOp::Not => "pie_unary_not",
+                };
+                let f = self.module.get_function(fn_name).unwrap();
+
+                let call = self
+                    .builder
+                    .build_call(f, &[val.into()], "binop")
+                    .expect("call");
+                call.try_as_basic_value().left()
+            }
             Expression::Call { callee, args } => {
                 match &**callee {
                     Expression::ModuleAccess { components } => {
