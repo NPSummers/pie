@@ -44,14 +44,15 @@ impl<'ctx> CodeGen<'ctx> {
     fn build_inc_ref(&self, val: BasicValueEnum<'ctx>) {
         let f = self.module.get_function("pie_inc_ref").expect("inc_ref");
         let ptr = val.into_pointer_value();
-        let _ = self.builder.build_call(f, &[ptr.into()], "inc_ref_call");
+        self.builder
+            .build_call(f, &[ptr.into()], "inc_ref_call")
+            .unwrap();
     }
 
     fn build_dec_ref(&self, val: BasicValueEnum<'ctx>) {
         let f = self.module.get_function("pie_dec_ref").expect("dec_ref");
         let ptr = val.into_pointer_value();
-        let _ = self
-            .builder
+        self.builder
             .build_call(f, &[ptr.into()], "dec_ref_call")
             .unwrap();
     }
@@ -101,11 +102,13 @@ impl<'ctx> CodeGen<'ctx> {
             self.builder.position_at_end(entry);
 
             // Call the PIE main function
-            let _ = self.builder.build_call(*pie_main, &[], "call_main");
+            self.builder
+                .build_call(*pie_main, &[], "call_main")
+                .unwrap();
 
             // Return 0
             let ret_val = self.context.i32_type().const_int(0, false);
-            let _ = self.builder.build_return(Some(&ret_val));
+            self.builder.build_return(Some(&ret_val)).unwrap();
         } else {
             return Err("PIE main function not found after compilation".into());
         }
@@ -136,7 +139,7 @@ impl<'ctx> CodeGen<'ctx> {
                 .unwrap();
             // Initialize to null so releases are safe
             let null = self.registry.ptr_type().const_null().as_basic_value_enum();
-            let _ = self.builder.build_store(ptr, null);
+            self.builder.build_store(ptr, null).unwrap();
             locals.insert(name, ptr);
         };
         for stmt in stmts {
@@ -209,10 +212,10 @@ impl<'ctx> CodeGen<'ctx> {
             let alloca = self.builder.build_alloca(ptr_type, pname).expect("alloca");
             // Initialize to null for safety, then store parameter (after inc_ref)
             let null = ptr_type.const_null().as_basic_value_enum();
-            let _ = self.builder.build_store(alloca, null);
+            self.builder.build_store(alloca, null).unwrap();
             let param = fnv.get_nth_param(idx as u32).unwrap();
             self.build_inc_ref(param);
-            let _ = self.builder.build_store(alloca, param);
+            self.builder.build_store(alloca, param).unwrap();
             locals.insert(pname, alloca);
         }
         self.find_variables(&mut locals, func.body.iter());
@@ -361,7 +364,7 @@ impl<'ctx> CodeGen<'ctx> {
                             self.builder.position_at_end(block);
                             ptr
                         };
-                        let _ = self.builder.build_store(i_alloca, start_i);
+                        self.builder.build_store(i_alloca, start_i).unwrap();
 
                         // Build loop blocks
                         let loop_header = self.context.append_basic_block(fnv, "for_range_header");
@@ -428,18 +431,20 @@ impl<'ctx> CodeGen<'ctx> {
                             .builder
                             .build_load(ptr_t, var_alloca, "load_for_var")
                             .unwrap();
-                        let _ = self.builder.build_call(
-                            fn_int_set_in_place,
-                            &[var_ptr.into(), i_cur.into()],
-                            "set_loop_var",
-                        );
+                        self.builder
+                            .build_call(
+                                fn_int_set_in_place,
+                                &[var_ptr.into(), i_cur.into()],
+                                "set_loop_var",
+                            )
+                            .unwrap();
 
                         for stmt in body {
                             self.codegen_stmt(locals, func, fnv, return_block, retval_ptr, stmt);
                         }
                         // i += step
                         let i_next = self.builder.build_int_add(i_cur, step_i, "i_next").unwrap();
-                        let _ = self.builder.build_store(i_alloca, i_next);
+                        self.builder.build_store(i_alloca, i_next).unwrap();
                         self.builder
                             .build_unconditional_branch(loop_header)
                             .unwrap();
@@ -635,35 +640,27 @@ impl<'ctx> CodeGen<'ctx> {
                     }
                     AssignOp::Plus => {
                         let f = self.module.get_function("pie_add_in_place").unwrap();
-                        let _ = self.builder.build_call(
-                            f,
-                            &[current_val.into(), value_val.into()],
-                            "add_ip",
-                        );
+                        self.builder
+                            .build_call(f, &[current_val.into(), value_val.into()], "add_ip")
+                            .unwrap();
                     }
                     AssignOp::Minus => {
                         let f = self.module.get_function("pie_sub_in_place").unwrap();
-                        let _ = self.builder.build_call(
-                            f,
-                            &[current_val.into(), value_val.into()],
-                            "sub_ip",
-                        );
+                        self.builder
+                            .build_call(f, &[current_val.into(), value_val.into()], "sub_ip")
+                            .unwrap();
                     }
                     AssignOp::Star => {
                         let f = self.module.get_function("pie_mul_in_place").unwrap();
-                        let _ = self.builder.build_call(
-                            f,
-                            &[current_val.into(), value_val.into()],
-                            "mul_ip",
-                        );
+                        self.builder
+                            .build_call(f, &[current_val.into(), value_val.into()], "mul_ip")
+                            .unwrap();
                     }
                     AssignOp::Slash => {
                         let f = self.module.get_function("pie_div_in_place").unwrap();
-                        let _ = self.builder.build_call(
-                            f,
-                            &[current_val.into(), value_val.into()],
-                            "div_ip",
-                        );
+                        self.builder
+                            .build_call(f, &[current_val.into(), value_val.into()], "div_ip")
+                            .unwrap();
                     }
                 }
                 if !matches!(value, Expression::Ident(_)) {
