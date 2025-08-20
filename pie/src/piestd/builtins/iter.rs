@@ -9,14 +9,14 @@ use crate::{
     runtime::{DebugIter, GcBox, GcRef, Value},
 };
 
-pie_native_fn!(pie_iter_new(iterable: GcRef) pie "std::iter::new"[Any] => Any -> Option<GcBox> {
-    let val = iterable.new_rc();
+pie_native_fn!(pie_iter_new(target: GcRef) pie "std::iter::new"[Any] => Any -> Option<GcBox> {
+    let val = target.new_rc();
     use Value::*;
     let iter: Box<dyn DebugIter> = match &*val.borrow() {
-        Iterator(b) => b.clone_as_debug_iter(),
-        Str(_) => Box::new(StringIter::new(val.clone()).unwrap()),
-        Map(_) => Box::new(MapIter::new(val.clone()).unwrap()),
-        List(_) => Box::new(ListIter::new(val.clone()).unwrap()),
+        Iterator(_) => return Some(target.new_box()),
+        Str(_) => Box::new(StringIter::new(target.new_rc()).unwrap()),
+        Map(_) => Box::new(MapIter::new(target.new_rc()).unwrap()),
+        List(_) => Box::new(ListIter::new(target.new_rc()).unwrap()),
         // TODO: Should these types be iterable?
         Bool(_) | Float(_) | Int(_) => return None,
     };

@@ -2,9 +2,9 @@
 use std::cell::{LazyCell, RefCell};
 use std::collections::HashMap;
 use std::fmt::{Debug, Display};
-// use std::mem::ManuallyDrop; // no longer needed
 use std::ptr::NonNull;
 use std::rc::Rc;
+use std::sync::atomic::AtomicIsize;
 
 #[derive(Debug)]
 pub enum Value {
@@ -111,10 +111,18 @@ impl Display for Value {
     }
 }
 
-#[derive(Debug)]
 #[repr(transparent)]
 /// A non-none reference counted value
 pub struct GcBox(NonNull<RefCell<Value>>);
+
+impl Debug for GcBox {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.as_ref().new_rc().fmt(f)
+    }
+}
+
+#[cfg(debug_assertions)]
+pub static REFS: AtomicIsize = AtomicIsize::new(0);
 
 impl GcBox {
     pub fn new(val: Value) -> GcBox {
@@ -156,6 +164,8 @@ impl GcBox {
 
 impl From<Rc<RefCell<Value>>> for GcBox {
     fn from(value: Rc<RefCell<Value>>) -> Self {
+        #[cfg(debug_assertions)]
+        REFS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let ptr = Rc::into_raw(value);
         unsafe { GcBox(NonNull::new_unchecked(ptr.cast_mut())) }
     }
@@ -163,6 +173,8 @@ impl From<Rc<RefCell<Value>>> for GcBox {
 
 impl Drop for GcBox {
     fn drop(&mut self) {
+        #[cfg(debug_assertions)]
+        REFS.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
         unsafe { Rc::from_raw(self.0.as_ptr()) };
     }
 }
@@ -172,6 +184,8 @@ impl Clone for GcBox {
         // Ensure the underlying Rc strong count is incremented so both
         // GcBox instances own a strong reference.
         unsafe { Rc::increment_strong_count(self.0.as_ptr()) };
+        #[cfg(debug_assertions)]
+        REFS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         GcBox(self.0)
     }
 }
@@ -249,12 +263,16 @@ impl GcRef<'_> {
     }
 
     pub fn inc_ref(&self) {
+        #[cfg(debug_assertions)]
+        REFS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let Some(r) = self.0 else { return };
         unsafe { Rc::increment_strong_count(core::ptr::from_ref(r)) };
     }
 
     pub unsafe fn dec_ref(&self) {
         let Some(r) = self.0 else { return };
+        #[cfg(debug_assertions)]
+        REFS.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
         unsafe { Rc::decrement_strong_count(core::ptr::from_ref(r)) };
     }
 
@@ -270,6 +288,9 @@ impl GcRef<'_> {
         unsafe {
             let rc = self.new_rc_noincrement();
             self.inc_ref();
+            // Compensate for the Rc no longer tracking REFS
+            #[cfg(debug_assertions)]
+            REFS.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
             rc
         }
     }

@@ -72,7 +72,7 @@ impl<'ctx> CodeGen<'ctx> {
         if new_val_is_ident {
             self.build_inc_ref(new_val);
         }
-        let _ = self.builder.build_store(dest, new_val);
+        self.builder.build_store(dest, new_val).unwrap();
     }
 
     pub fn compile_program(&mut self, prog: &Program) -> Result<(), String> {
@@ -275,174 +275,168 @@ impl<'ctx> CodeGen<'ctx> {
                 body,
             } => {
                 // Special-case: numeric range loops compile to non-allocating integer loop
-                if let Expression::Call { callee, args } = iterable {
-                    if let Expression::ModuleAccess { components } = &**callee {
-                        if components.as_slice() == ["std", "iter", "range"] && args.len() == 3 {
-                            let ptr_t = self.registry.ptr_type();
-                            let i64_t = self.context.i64_type();
-                            let fn_int_to_i64 = self.module.get_function("pie_int_to_i64").unwrap();
-                            let fn_int_new = self.module.get_function("pie_int_new").unwrap();
-                            let fn_int_set_in_place =
-                                self.module.get_function("pie_int_set_in_place").unwrap();
+                'specialize: {
+                    let Expression::Call { callee, args } = iterable else {
+                        break 'specialize;
+                    };
+                    let Expression::ModuleAccess { components } = &**callee else {
+                        break 'specialize;
+                    };
+                    if components.as_slice() == ["std", "iter", "range"] && args.len() == 3 {
+                        let ptr_t = self.registry.ptr_type();
+                        let i64_t = self.context.i64_type();
 
-                            // Compile args and extract i64s; dec_ref temps if needed
-                            let mut compiled_args = Vec::with_capacity(3);
-                            let mut should_dec = Vec::with_capacity(3);
-                            for a in args.iter() {
-                                let is_ident = matches!(a, Expression::Ident(_));
-                                let av = self.codegen_expr(a, locals).expect("range arg expr");
-                                compiled_args.push((av, is_ident));
-                                should_dec.push(!is_ident);
-                            }
+                        let fn_int_to_i64 = self.module.get_function("pie_int_to_i64").unwrap();
+                        let fn_int_new = self.module.get_function("pie_int_new").unwrap();
+                        let fn_int_set_in_place =
+                            self.module.get_function("pie_int_set_in_place").unwrap();
 
-                            let start_i = self
-                                .builder
-                                .build_call(fn_int_to_i64, &[compiled_args[0].0.into()], "start_i")
-                                .expect("call");
-                            let start_i = start_i
-                                .try_as_basic_value()
-                                .left()
-                                .unwrap()
-                                .into_int_value();
-                            let stop_i = self
-                                .builder
-                                .build_call(fn_int_to_i64, &[compiled_args[1].0.into()], "stop_i")
-                                .expect("call");
-                            let stop_i =
-                                stop_i.try_as_basic_value().left().unwrap().into_int_value();
-                            let step_i = self
-                                .builder
-                                .build_call(fn_int_to_i64, &[compiled_args[2].0.into()], "step_i")
-                                .expect("call");
-                            let step_i =
-                                step_i.try_as_basic_value().left().unwrap().into_int_value();
-
-                            // Dec refs on temporary arg values
-                            for (idx, dec) in should_dec.into_iter().enumerate() {
-                                if dec {
-                                    self.build_dec_ref(compiled_args[idx].0);
-                                }
-                            }
-
-                            let var_alloca = *locals
-                                .get(var)
-                                .expect("a variable to have been previously allocated with alloca");
-
-                            // Create loop variable GcBox and store into var slot
-                            let init_box = self
-                                .builder
-                                .build_call(fn_int_new, &[start_i.into()], "for_range_var_init")
-                                .expect("int new");
-                            let init_box = init_box.try_as_basic_value().left().unwrap();
-                            self.store_owned_ptr(var_alloca, init_box, false);
-
-                            // i64 loop index alloca
-                            let i_alloca = self.builder.build_alloca(i64_t, "i").expect("alloca i");
-                            let _ = self.builder.build_store(i_alloca, start_i);
-
-                            // Build loop blocks
-                            let loop_header =
-                                self.context.append_basic_block(fnv, "for_range_header");
-                            let loop_then = self.context.append_basic_block(fnv, "for_range_then");
-                            let loop_after =
-                                self.context.append_basic_block(fnv, "for_range_after");
-                            self.builder
-                                .build_unconditional_branch(loop_header)
-                                .unwrap();
-                            self.builder.position_at_end(loop_header);
-
-                            // Compute condition: (step>0 && i<stop) || (step<=0 && i>stop)
-                            let i_cur = self
-                                .builder
-                                .build_load(i64_t, i_alloca, "i_cur")
-                                .unwrap()
-                                .into_int_value();
-                            let step_pos = self
-                                .builder
-                                .build_int_compare(
-                                    inkwell::IntPredicate::SGT,
-                                    step_i,
-                                    i64_t.const_zero(),
-                                    "step_pos",
-                                )
-                                .unwrap();
-                            let step_neg = self
-                                .builder
-                                .build_int_compare(
-                                    inkwell::IntPredicate::SLE,
-                                    step_i,
-                                    i64_t.const_zero(),
-                                    "step_le",
-                                )
-                                .unwrap();
-                            let cmp_lt = self
-                                .builder
-                                .build_int_compare(
-                                    inkwell::IntPredicate::SLT,
-                                    i_cur,
-                                    stop_i,
-                                    "i_lt_stop",
-                                )
-                                .unwrap();
-                            let cmp_gt = self
-                                .builder
-                                .build_int_compare(
-                                    inkwell::IntPredicate::SGT,
-                                    i_cur,
-                                    stop_i,
-                                    "i_gt_stop",
-                                )
-                                .unwrap();
-                            let cond1 = self.builder.build_and(step_pos, cmp_lt, "cond1").unwrap();
-                            let cond2 = self.builder.build_and(step_neg, cmp_gt, "cond2").unwrap();
-                            let cond = self.builder.build_or(cond1, cond2, "loop_cond").unwrap();
-                            self.builder
-                                .build_conditional_branch(cond, loop_then, loop_after)
-                                .unwrap();
-
-                            // Then block: set loop var value and body
-                            self.builder.position_at_end(loop_then);
-                            // load loop var ptr
-                            let var_ptr = self
-                                .builder
-                                .build_load(ptr_t, var_alloca, "load_for_var")
-                                .unwrap();
-                            let _ = self.builder.build_call(
-                                fn_int_set_in_place,
-                                &[var_ptr.into(), i_cur.into()],
-                                "set_loop_var",
-                            );
-
-                            locals.insert(var, var_alloca);
-                            for stmt in body {
-                                self.codegen_stmt(
-                                    locals,
-                                    func,
-                                    fnv,
-                                    return_block,
-                                    retval_ptr,
-                                    stmt,
-                                );
-                            }
-                            // i += step
-                            let i_next =
-                                self.builder.build_int_add(i_cur, step_i, "i_next").unwrap();
-                            let _ = self.builder.build_store(i_alloca, i_next);
-                            self.builder
-                                .build_unconditional_branch(loop_header)
-                                .unwrap();
-                            locals.remove(var);
-
-                            // After block
-                            self.builder.position_at_end(loop_after);
-                            // Release the final value held in the loop variable slot
-                            let for_var_final = self
-                                .builder
-                                .build_load(self.registry.ptr_type(), var_alloca, "for_var_final")
-                                .expect("load for var at loop end");
-                            self.build_dec_ref(for_var_final);
-                            return;
+                        // Compile args and extract i64s; dec_ref temps if needed
+                        let mut compiled_args = Vec::with_capacity(3);
+                        let mut should_dec = Vec::with_capacity(3);
+                        for a in args.iter() {
+                            let is_ident = matches!(a, Expression::Ident(_));
+                            let av = self.codegen_expr(a, locals).expect("range arg expr");
+                            compiled_args.push((av, is_ident));
+                            should_dec.push(!is_ident);
                         }
+
+                        let start_i = self
+                            .builder
+                            .build_call(fn_int_to_i64, &[compiled_args[0].0.into()], "start_i")
+                            .expect("call");
+                        let start_i = start_i
+                            .try_as_basic_value()
+                            .left()
+                            .unwrap()
+                            .into_int_value();
+                        let stop_i = self
+                            .builder
+                            .build_call(fn_int_to_i64, &[compiled_args[1].0.into()], "stop_i")
+                            .expect("call");
+                        let stop_i = stop_i.try_as_basic_value().left().unwrap().into_int_value();
+                        let step_i = self
+                            .builder
+                            .build_call(fn_int_to_i64, &[compiled_args[2].0.into()], "step_i")
+                            .expect("call");
+                        let step_i = step_i.try_as_basic_value().left().unwrap().into_int_value();
+
+                        // Dec refs on temporary arg values
+                        for (idx, dec) in should_dec.into_iter().enumerate() {
+                            if dec {
+                                self.build_dec_ref(compiled_args[idx].0);
+                            }
+                        }
+
+                        let var_alloca = *locals
+                            .get(var)
+                            .expect("a variable to have been previously allocated with alloca");
+
+                        // Create loop variable GcBox and store into var slot
+                        let init_box = self
+                            .builder
+                            .build_call(fn_int_new, &[start_i.into()], "for_range_var_init")
+                            .expect("int new");
+                        let init_box = init_box.try_as_basic_value().left().unwrap();
+                        self.store_owned_ptr(var_alloca, init_box, false);
+
+                        // i64 loop index alloca
+                        let i_alloca = self
+                            .builder
+                            .build_alloca(i64_t, "loop_index")
+                            .expect("alloca loop_index");
+                        let _ = self.builder.build_store(i_alloca, start_i);
+
+                        // Build loop blocks
+                        let loop_header = self.context.append_basic_block(fnv, "for_range_header");
+                        let loop_then = self.context.append_basic_block(fnv, "for_range_then");
+                        let loop_after = self.context.append_basic_block(fnv, "for_range_after");
+                        self.builder
+                            .build_unconditional_branch(loop_header)
+                            .unwrap();
+                        self.builder.position_at_end(loop_header);
+
+                        // Compute condition: (step>0 && i<stop) || (step<=0 && i>stop)
+                        let i_cur = self
+                            .builder
+                            .build_load(i64_t, i_alloca, "i_cur")
+                            .unwrap()
+                            .into_int_value();
+                        let step_pos = self
+                            .builder
+                            .build_int_compare(
+                                inkwell::IntPredicate::SGT,
+                                step_i,
+                                i64_t.const_zero(),
+                                "step_pos",
+                            )
+                            .unwrap();
+                        let step_neg = self
+                            .builder
+                            .build_int_compare(
+                                inkwell::IntPredicate::SLE,
+                                step_i,
+                                i64_t.const_zero(),
+                                "step_le",
+                            )
+                            .unwrap();
+                        let cmp_lt = self
+                            .builder
+                            .build_int_compare(
+                                inkwell::IntPredicate::SLT,
+                                i_cur,
+                                stop_i,
+                                "i_lt_stop",
+                            )
+                            .unwrap();
+                        let cmp_gt = self
+                            .builder
+                            .build_int_compare(
+                                inkwell::IntPredicate::SGT,
+                                i_cur,
+                                stop_i,
+                                "i_gt_stop",
+                            )
+                            .unwrap();
+                        let cond1 = self.builder.build_and(step_pos, cmp_lt, "cond1").unwrap();
+                        let cond2 = self.builder.build_and(step_neg, cmp_gt, "cond2").unwrap();
+                        let cond = self.builder.build_or(cond1, cond2, "loop_cond").unwrap();
+                        self.builder
+                            .build_conditional_branch(cond, loop_then, loop_after)
+                            .unwrap();
+
+                        // Then block: set loop var value and body
+                        self.builder.position_at_end(loop_then);
+                        // load loop var ptr
+                        let var_ptr = self
+                            .builder
+                            .build_load(ptr_t, var_alloca, "load_for_var")
+                            .unwrap();
+                        let _ = self.builder.build_call(
+                            fn_int_set_in_place,
+                            &[var_ptr.into(), i_cur.into()],
+                            "set_loop_var",
+                        );
+
+                        for stmt in body {
+                            self.codegen_stmt(locals, func, fnv, return_block, retval_ptr, stmt);
+                        }
+                        // i += step
+                        let i_next = self.builder.build_int_add(i_cur, step_i, "i_next").unwrap();
+                        let _ = self.builder.build_store(i_alloca, i_next);
+                        self.builder
+                            .build_unconditional_branch(loop_header)
+                            .unwrap();
+
+                        // After block
+                        self.builder.position_at_end(loop_after);
+                        // Release the final value held in the loop variable slot
+                        self.store_owned_ptr(
+                            var_alloca,
+                            self.registry.ptr_type().const_null().into(),
+                            false,
+                        );
+                        return;
                     }
                 }
 
@@ -621,8 +615,7 @@ impl<'ctx> CodeGen<'ctx> {
                 // Handle different assignment operators
                 match op {
                     AssignOp::Assign => {
-                        let rhs_is_ident = matches!(value, Expression::Ident(_));
-                        self.store_owned_ptr(ptr, value_val, rhs_is_ident);
+                        self.store_owned_ptr(ptr, value_val, false);
                     }
                     AssignOp::Plus => {
                         let f = self.module.get_function("pie_add_in_place").unwrap();
@@ -631,9 +624,6 @@ impl<'ctx> CodeGen<'ctx> {
                             &[current_val.into(), value_val.into()],
                             "add_ip",
                         );
-                        if !matches!(value, Expression::Ident(_)) {
-                            self.build_dec_ref(value_val);
-                        }
                     }
                     AssignOp::Minus => {
                         let f = self.module.get_function("pie_sub_in_place").unwrap();
@@ -642,9 +632,6 @@ impl<'ctx> CodeGen<'ctx> {
                             &[current_val.into(), value_val.into()],
                             "sub_ip",
                         );
-                        if !matches!(value, Expression::Ident(_)) {
-                            self.build_dec_ref(value_val);
-                        }
                     }
                     AssignOp::Star => {
                         let f = self.module.get_function("pie_mul_in_place").unwrap();
@@ -653,9 +640,6 @@ impl<'ctx> CodeGen<'ctx> {
                             &[current_val.into(), value_val.into()],
                             "mul_ip",
                         );
-                        if !matches!(value, Expression::Ident(_)) {
-                            self.build_dec_ref(value_val);
-                        }
                     }
                     AssignOp::Slash => {
                         let f = self.module.get_function("pie_div_in_place").unwrap();
@@ -664,10 +648,10 @@ impl<'ctx> CodeGen<'ctx> {
                             &[current_val.into(), value_val.into()],
                             "div_ip",
                         );
-                        if !matches!(value, Expression::Ident(_)) {
-                            self.build_dec_ref(value_val);
-                        }
                     }
+                }
+                if !matches!(value, Expression::Ident(_)) {
+                    self.build_dec_ref(value_val);
                 }
             }
             Statement::Expr(e) => {
@@ -742,10 +726,14 @@ impl<'ctx> CodeGen<'ctx> {
                     .left()
                     .unwrap();
                 for value in values {
+                    let val_is_ident = matches!(value, Expression::Ident(_));
                     let val = self.codegen_expr(value, locals).unwrap();
                     self.builder
                         .build_call(list_push, &[list.into(), val.into()], "list_lit_push")
                         .unwrap();
+                    if !val_is_ident {
+                        self.build_dec_ref(val);
+                    }
                 }
                 Some(list)
             }
@@ -894,12 +882,8 @@ impl<'ctx> CodeGen<'ctx> {
                         if let Some(native_func) = self.registry.get_by_std_path(components) {
                             let llvm_func =
                                 self.module.get_function(native_func.native_name).unwrap();
-                            let mut compiled_args: Vec<inkwell::values::BasicMetadataValueEnum> =
-                                Vec::with_capacity(args.len());
-                            let mut should_dec: Vec<(
-                                bool,
-                                Option<inkwell::values::BasicValueEnum>,
-                            )> = Vec::with_capacity(args.len());
+                            let mut compiled_args = Vec::with_capacity(args.len());
+                            let mut should_dec = Vec::with_capacity(args.len());
                             for a in args {
                                 let is_ident = matches!(a, Expression::Ident(_));
                                 if let Some(av) = self.codegen_expr(a, locals) {
@@ -947,39 +931,33 @@ impl<'ctx> CodeGen<'ctx> {
                         panic!("Attempted to call an unknown function {fname}")
                     }
                     Expression::Ident(fname) => {
-                        if let Some(f) = self.functions.get(*fname) {
-                            let mut compiled_args: Vec<inkwell::values::BasicMetadataValueEnum> =
-                                Vec::with_capacity(args.len());
-                            let mut should_dec: Vec<(
-                                bool,
-                                Option<inkwell::values::BasicValueEnum>,
-                            )> = Vec::with_capacity(args.len());
-                            for a in args {
-                                let is_ident = matches!(a, Expression::Ident(_));
-                                if let Some(av) = self.codegen_expr(a, locals) {
-                                    should_dec.push((!is_ident, Some(av)));
-                                    compiled_args.push(av.into());
-                                } else {
-                                    should_dec.push((false, None));
-                                    compiled_args.push(ptr_type.const_null().into());
-                                }
-                            }
-                            let call = self
-                                .builder
-                                .build_call(*f, &compiled_args, "call")
-                                .expect("call");
-                            for (dec, val) in should_dec {
-                                if dec {
-                                    if let Some(v) = val {
-                                        self.build_dec_ref(v);
-                                    }
-                                }
-                            }
-                            if call.try_as_basic_value().left().is_some() {
-                                return Some(call.try_as_basic_value().left().unwrap());
+                        let Some(f) = self.functions.get(*fname) else {
+                            panic!("Attempted to call a function {fname} that could not be found")
+                        };
+                        let mut compiled_args = Vec::with_capacity(args.len());
+                        let mut should_dec = Vec::with_capacity(args.len());
+                        for a in args {
+                            let is_ident = matches!(a, Expression::Ident(_));
+                            if let Some(av) = self.codegen_expr(a, locals) {
+                                should_dec.push((!is_ident, Some(av)));
+                                compiled_args.push(av.into());
+                            } else {
+                                should_dec.push((false, None));
+                                compiled_args.push(ptr_type.const_null().into());
                             }
                         }
-                        panic!("Attempted to call a function {fname} that could not be found")
+                        let call = self
+                            .builder
+                            .build_call(*f, &compiled_args, "call")
+                            .expect("call");
+                        for (dec, val) in should_dec {
+                            if dec {
+                                if let Some(v) = val {
+                                    self.build_dec_ref(v);
+                                }
+                            }
+                        }
+                        Some(call.try_as_basic_value().left().unwrap())
                     }
                     expr => panic!("Codegen for {expr:#?} has not been implemented yet"),
                 }

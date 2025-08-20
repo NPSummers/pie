@@ -92,6 +92,11 @@ fn main() -> anyhow::Result<()> {
     let took = start.elapsed();
     eprintln!("Program finished with exit code: {}", result);
     eprintln!("Runtime: {took:?}");
+    #[cfg(debug_assertions)]
+    {
+        let refs = runtime::REFS.load(std::sync::atomic::Ordering::Acquire);
+        eprintln!("Living Rc references at the end of program: {refs}");
+    }
 
     Ok(())
 }
