@@ -13,6 +13,11 @@ pie_native_fn!(pie_print_err(val: GcRef) pie "std::print_err"[Any] {
     eprintln!("{}", val.value())
 });
 
+pie_native_fn!(pie_get_args() pie "std::args"[] => List -> GcBox {
+    let args = std::env::args().map(|arg| arg.into()).collect();
+    GcBox::new(Value::List(args))
+});
+
 pie_native_fn!(pie_input_get_int() pie "std::input::get_int"[] => Int -> Option<GcBox> {
     let mut buf = String::new();
     stdin().read_line(&mut buf).ok()?;

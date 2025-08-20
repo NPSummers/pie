@@ -6,7 +6,7 @@ use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::module::Module as LlvmModule;
 use inkwell::types::BasicTypeEnum;
-use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue, PointerValue};
+use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue, InstructionValue, PointerValue};
 use inkwell::AddressSpace;
 use std::collections::HashMap;
 use std::ops::Deref;
@@ -125,6 +125,11 @@ impl<'ctx> CodeGen<'ctx> {
         }
 
         Ok(())
+    }
+
+    fn get_current_block_terminator(&self) -> Option<InstructionValue<'ctx>> {
+        let block = self.builder.get_insert_block()?;
+        block.get_terminator()
     }
 
     fn find_variables<'a>(
@@ -591,7 +596,9 @@ impl<'ctx> CodeGen<'ctx> {
                 for s in then_body {
                     self.codegen_stmt(locals, func, fnv, return_block, retval_ptr, s);
                 }
-                self.builder.build_unconditional_branch(cont_bb).unwrap();
+                if self.get_current_block_terminator().is_none() {
+                    self.builder.build_unconditional_branch(cont_bb).unwrap();
+                }
 
                 // else
                 self.builder.position_at_end(else_bb);
@@ -600,7 +607,9 @@ impl<'ctx> CodeGen<'ctx> {
                         self.codegen_stmt(locals, func, fnv, return_block, retval_ptr, s);
                     }
                 }
-                self.builder.build_unconditional_branch(cont_bb).unwrap();
+                if self.get_current_block_terminator().is_none() {
+                    self.builder.build_unconditional_branch(cont_bb).unwrap();
+                }
 
                 // cont
                 self.builder.position_at_end(cont_bb);
@@ -782,11 +791,14 @@ impl<'ctx> CodeGen<'ctx> {
                 Some(map)
             }
             Expression::Str(s) => {
-                let gv = self
-                    .builder
-                    .build_global_string_ptr(s, "gstr")
-                    .expect("gstr");
-                let ptr = gv.as_pointer_value();
+                let bytes = s.as_bytes();
+                let global_string = self.module.add_global(
+                    self.context.i8_type().array_type(bytes.len() as u32),
+                    None,
+                    "gstr",
+                );
+                global_string.set_initializer(&self.context.const_string(bytes, false));
+                let ptr = global_string.as_pointer_value();
                 let fn_str_new = self.module.get_function("pie_string_new").unwrap();
                 let len = self.context.i64_type().const_int(s.len() as u64, false);
                 let call = self

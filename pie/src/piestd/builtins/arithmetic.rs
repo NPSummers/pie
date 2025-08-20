@@ -17,7 +17,7 @@ pie_native_fn!(pie_bool_new(v: bool) -> GcBox {
     v.into()
 });
 
-fn bool_to_box(b: bool) -> GcBox {
+pub fn bool_to_box(b: bool) -> GcBox {
     // Use statically allocated true/false
     if b {
         GcBox::new_true()
