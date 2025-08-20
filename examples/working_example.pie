@@ -1,4 +1,5 @@
 use pie/std;
+use lib/math;
 
 module demo {
     def int get_meaning() {
@@ -29,4 +30,5 @@ def void main() {
             std::print(n);
         }
     }
+    std::print("square(7) from lib/math: " + lib::math::square(7));
 }

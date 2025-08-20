@@ -1,12 +1,18 @@
 use pie/std;
 
 def void main() {
-    let map h = std::map::new();
-    std::map::set(h, "X-Api-Key", "GWnggJ8q51xCnqzIm3IgFQ==0x26Fe9f7ZvWD2xN");
-    let string body = std::http::request(std::http::get(), "https://api.api-ninjas.com/v1/quotes", h, "");
+    let map routes = std::map::new();
 
-    std::print("body: " + body);
-    std::print(std::map::from_json(body));
+    let map html_headers = std::map::new();
+    std::map::set(html_headers, "Content-Type", "text/html; charset=utf-8");
+
+    let map home = std::map::new();
+    std::map::set(home, "status", 200);
+    std::map::set(home, "headers", html_headers);
+    std::map::set(home, "body",
+        "<!doctype html><html><head><title>PIE</title></head><body><h1>Hello</h1><p>Served by PIE.</p></body></html>"
+    );
+
+    std::map::set(routes, "GET /", home);
+    std::http::serve_routes(8080, routes);
 }
-
-

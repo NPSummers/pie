@@ -1,0 +1,11 @@
+use pie/std;
+
+def void main() {
+    let bool ok = std::fs::write("example.txt", "Hello PIE!\n");
+    std::print("write ok: " + ok);
+
+    let string maybe = std::fs::read("example.txt");
+    if maybe {
+        std::print("read back: " + maybe);
+    }
+}

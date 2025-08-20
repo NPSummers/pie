@@ -10,6 +10,7 @@ inkwell = { version = "0.6", features = [
   "llvm17-0-prefer-dynamic",
 ] }
 ureq = "3.1"
+tiny_http = "0.12"
 logos = "0.15"
 memchr = "2.7.5"
 paste = "1.0.15"
