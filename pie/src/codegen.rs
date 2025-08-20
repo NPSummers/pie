@@ -115,7 +115,10 @@ impl<'ctx> CodeGen<'ctx> {
 
         // Verify the module
         if let Err(errors) = self.module.verify() {
-            return Err(format!("LLVM module verification failed: {}", errors));
+            return Err(format!(
+                "LLVM module verification failed: {}",
+                errors.to_string_lossy()
+            ));
         }
 
         Ok(())
@@ -220,9 +223,16 @@ impl<'ctx> CodeGen<'ctx> {
         for stmt in &func.body {
             self.codegen_stmt(&mut locals, func, fnv, return_cleanup, retval, stmt);
         }
-        self.builder
-            .build_unconditional_branch(return_cleanup)
-            .unwrap();
+        let has_term = self
+            .builder
+            .get_insert_block()
+            .and_then(|b| b.get_last_instruction())
+            .is_some_and(|i| i.is_terminator());
+        if !has_term {
+            self.builder
+                .build_unconditional_branch(return_cleanup)
+                .unwrap();
+        }
 
         let current_block = self.builder.get_insert_block().unwrap();
         // Make return the final block
@@ -356,7 +366,7 @@ impl<'ctx> CodeGen<'ctx> {
                                     "step_pos",
                                 )
                                 .unwrap();
-                            let step_le = self
+                            let step_neg = self
                                 .builder
                                 .build_int_compare(
                                     inkwell::IntPredicate::SLE,
@@ -384,7 +394,7 @@ impl<'ctx> CodeGen<'ctx> {
                                 )
                                 .unwrap();
                             let cond1 = self.builder.build_and(step_pos, cmp_lt, "cond1").unwrap();
-                            let cond2 = self.builder.build_and(step_le, cmp_gt, "cond2").unwrap();
+                            let cond2 = self.builder.build_and(step_neg, cmp_gt, "cond2").unwrap();
                             let cond = self.builder.build_or(cond1, cond2, "loop_cond").unwrap();
                             self.builder
                                 .build_conditional_branch(cond, loop_then, loop_after)
@@ -480,12 +490,10 @@ impl<'ctx> CodeGen<'ctx> {
 
                 self.builder.position_at_end(loop_hasnext);
 
-                locals.insert(var, var_alloca);
                 for stmt in body {
                     self.codegen_stmt(locals, func, fnv, return_block, retval_ptr, stmt);
                 }
                 self.builder.build_unconditional_branch(loop_bb).unwrap();
-                locals.remove(var);
                 self.builder.position_at_end(loop_after);
                 let for_var_final = self
                     .builder

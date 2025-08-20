@@ -27,12 +27,10 @@ fn bool_to_box(b: bool) -> GcBox {
 }
 
 // Returns null if the provided value is not truthy, a valid GcRef(the one provided to it) otherwise
-pie_native_fn!(pie_internal_truthy(a: GcRef) -> GcBox {
+pie_native_fn!(pie_internal_truthy(a: GcRef) -> Option<GcBox> {
     use Value::*;
-    let Some(val) = a.try_value() else {
-        return bool_to_box(false);
-    };
-    bool_to_box(match &*val {
+    let val = a.try_value()?;
+    match &*val {
         &Bool(b) => b,
         &Int(i) => i != 0,
         &Float(f) => f.is_finite() && f != 0.0,
@@ -40,7 +38,7 @@ pie_native_fn!(pie_internal_truthy(a: GcRef) -> GcBox {
         Map(m) => !m.is_empty(),
         Str(s) =>  !s.is_empty(),
         Iterator(_) => false,
-    })
+    }.then(GcBox::new_true)
 });
 
 // NOTE: Equality functions return:

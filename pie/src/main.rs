@@ -42,7 +42,11 @@ fn main() -> anyhow::Result<()> {
             std::process::exit(1);
         }
     };
+    #[cfg(debug_assertions)]
+    eprintln!("Program before constfolding: {prog:#?}");
     constfold::constfold_program(&mut prog);
+    #[cfg(debug_assertions)]
+    eprintln!("Program after constfolding: {prog:#?}");
 
     // println!("{prog:#?}");
 
