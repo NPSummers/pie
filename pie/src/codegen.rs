@@ -217,8 +217,11 @@ impl<'ctx> CodeGen<'ctx> {
         }
         self.find_variables(&mut locals, func.body.iter());
 
+        let body = self.context.append_basic_block(fnv, "body");
         let return_cleanup = self.context.append_basic_block(fnv, "return_cleanup");
-        self.builder.position_at_end(entry);
+
+        self.builder.build_unconditional_branch(body).unwrap();
+        self.builder.position_at_end(body);
 
         for stmt in &func.body {
             self.codegen_stmt(&mut locals, func, fnv, return_cleanup, retval, stmt);
@@ -340,11 +343,24 @@ impl<'ctx> CodeGen<'ctx> {
                         let init_box = init_box.try_as_basic_value().left().unwrap();
                         self.store_owned_ptr(var_alloca, init_box, false);
 
-                        // i64 loop index alloca
-                        let i_alloca = self
-                            .builder
-                            .build_alloca(i64_t, "loop_index")
-                            .expect("alloca loop_index");
+                        // Hoist loop index to function entry
+                        let i_alloca = {
+                            let block = self.builder.get_insert_block().unwrap();
+                            let entry = block
+                                .get_parent()
+                                .unwrap()
+                                .get_basic_block_iter()
+                                .find(|b| b.get_name() == c"entry")
+                                .unwrap();
+                            let jumpout = entry.get_last_instruction().unwrap();
+                            self.builder.position_before(&jumpout);
+                            let ptr = self
+                                .builder
+                                .build_alloca(i64_t, "loop_index")
+                                .expect("alloca loop_index");
+                            self.builder.position_at_end(block);
+                            ptr
+                        };
                         let _ = self.builder.build_store(i_alloca, start_i);
 
                         // Build loop blocks
