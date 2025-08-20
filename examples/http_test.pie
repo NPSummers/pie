@@ -3,9 +3,10 @@ use pie/std;
 def void main() {
     let map h = std::map::new();
     std::map::set(h, "X-Api-Key", "GWnggJ8q51xCnqzIm3IgFQ==0x26Fe9f7ZvWD2xN");
-    let string body = std::http_get("https://api.api-ninjas.com/v1/quotes", h);
-    body = "body: " + body;
-    std::print(body);
+    let string body = std::http::request(std::http::get(), "https://api.api-ninjas.com/v1/quotes", h, "");
+
+    std::print("body: " + body);
+    std::print(std::map::from_json(body));
 }
 
 

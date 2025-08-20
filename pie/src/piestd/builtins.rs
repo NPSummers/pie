@@ -7,6 +7,7 @@ use inkwell::{
     AddressSpace,
 };
 mod arithmetic;
+mod http;
 mod io;
 mod iter;
 mod list;

@@ -640,40 +640,53 @@ impl<'ctx> CodeGen<'ctx> {
                     .builder
                     .build_load(self.registry.ptr_type(), ptr, "current_val")
                     .expect("load");
+                let value_is_ident = matches!(value, Expression::Ident(_));
                 let value_val = self.codegen_expr(value, locals).expect("value expression");
 
                 // Handle different assignment operators
                 match op {
                     AssignOp::Assign => {
-                        self.store_owned_ptr(ptr, value_val, false);
+                        // Transfer/move ownership into the target slot. If RHS is an identifier,
+                        // bump its refcount because two owning slots will now point to it.
+                        self.store_owned_ptr(ptr, value_val, value_is_ident);
+                        // Do NOT dec_ref the RHS here: it has been stored into the target.
                     }
                     AssignOp::Plus => {
                         let f = self.module.get_function("pie_add_in_place").unwrap();
                         self.builder
                             .build_call(f, &[current_val.into(), value_val.into()], "add_ip")
                             .unwrap();
+                        if !value_is_ident {
+                            self.build_dec_ref(value_val);
+                        }
                     }
                     AssignOp::Minus => {
                         let f = self.module.get_function("pie_sub_in_place").unwrap();
                         self.builder
                             .build_call(f, &[current_val.into(), value_val.into()], "sub_ip")
                             .unwrap();
+                        if !value_is_ident {
+                            self.build_dec_ref(value_val);
+                        }
                     }
                     AssignOp::Star => {
                         let f = self.module.get_function("pie_mul_in_place").unwrap();
                         self.builder
                             .build_call(f, &[current_val.into(), value_val.into()], "mul_ip")
                             .unwrap();
+                        if !value_is_ident {
+                            self.build_dec_ref(value_val);
+                        }
                     }
                     AssignOp::Slash => {
                         let f = self.module.get_function("pie_div_in_place").unwrap();
                         self.builder
                             .build_call(f, &[current_val.into(), value_val.into()], "div_ip")
                             .unwrap();
+                        if !value_is_ident {
+                            self.build_dec_ref(value_val);
+                        }
                     }
-                }
-                if !matches!(value, Expression::Ident(_)) {
-                    self.build_dec_ref(value_val);
                 }
             }
             Statement::Expr(e) => {
