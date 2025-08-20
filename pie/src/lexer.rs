@@ -47,6 +47,20 @@ const fn split(sep: &'static str) -> impl for<'s> Fn(&mut Lexer<'s, Token<'s>>) 
     move |lex| lex.slice().split(sep).collect()
 }
 
+fn remove_underscores<'s>(s: &'s str) -> Cow<'s, str> {
+    let Some(first_underscore) = memchr::memchr(b'_', s.as_bytes()) else {
+        return s.into();
+    };
+    let mut out = s[..first_underscore].to_string();
+    let mut rest = &s[first_underscore + 1..];
+    while let Some(first_underscore) = memchr::memchr(b'_', rest.as_bytes()) {
+        out.push_str(&rest[..first_underscore]);
+        rest = &rest[first_underscore + 1..];
+    }
+    out.push_str(rest);
+    out.into()
+}
+
 use logos::{Lexer, Logos};
 
 #[derive(Logos, Debug, PartialEq, Clone)]
@@ -100,11 +114,10 @@ pub enum Token<'s> {
     BoolLit(bool),
     #[regex("\"", unescape_string)]
     StringLit(Cow<'s, str>),
-    // TODO: Allow _ as separator in numbers
-    #[regex(r"0x[0-9a-fA-F]+", |lex| i64::from_str_radix(&lex.slice()[2..], 16).ok())]
-    #[regex(r"0o[0-7]+", |lex| i64::from_str_radix(&lex.slice()[2..], 8).ok())]
-    #[regex(r"0b[0-1]+", |lex| i64::from_str_radix(&lex.slice()[2..], 2).ok())]
-    #[regex(r"\d+", |lex| lex.slice().parse().ok())]
+    #[regex(r"0x[0-9a-fA-F][0-9a-fA-F_]*", |lex| i64::from_str_radix(&remove_underscores(&lex.slice()[2..]), 16).ok())]
+    #[regex(r"0o[0-7_]+", |lex| i64::from_str_radix(&remove_underscores(&lex.slice()[2..]), 8).ok())]
+    #[regex(r"0b[0-1_]+", |lex| i64::from_str_radix(&remove_underscores(&lex.slice()[2..]), 2).ok())]
+    #[regex(r"[0-9][0-9_]*", |lex| remove_underscores(lex.slice()).parse().ok())]
     IntLit(i64),
     #[regex(r"\.\d+", |lex| lex.slice().parse().ok())]
     #[regex(r"\d+\.\d+", |lex| lex.slice().parse().ok())]

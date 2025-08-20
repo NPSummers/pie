@@ -11,9 +11,9 @@ def void main() {
         return;
     }
     let int r = std::rand::int_range(0, 10000 - 1);
-    let list a = [0] * 10000;
-    for i in std::iter::range(0, 10000, 1) {
-        for j in std::iter::range(0, 100000, 1) {
+    let list a = [0] * 10_000;
+    for i in std::iter::range(0, 10_000, 1) {
+        for j in std::iter::range(0, 100_000, 1) {
             std::list::add_in_place(a, i, j % u);
         }
         std::list::add_in_place(a, i, r);
