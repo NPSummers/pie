@@ -20,8 +20,32 @@ use std::time::Instant;
 
 fn main() -> anyhow::Result<()> {
     // Get file path from command line arguments
-    let mut args = env::args().skip(1);
-    let [Some(file_path), None] = core::array::from_fn(|_| args.next()) else {
+    let mut file_path = None;
+    let mut opt_level = OptimizationLevel::None;
+    for arg in env::args().skip(1) {
+        if arg.starts_with("-O") {
+            let rest = &arg[2..];
+            if rest.is_empty() {
+                opt_level = OptimizationLevel::Default;
+                continue;
+            }
+            let level_int: usize = rest
+                .parse()
+                .expect("Expected an integer optimization level after -O");
+            let level = [
+                OptimizationLevel::None,
+                OptimizationLevel::Less,
+                OptimizationLevel::Default,
+                OptimizationLevel::Aggressive,
+            ]
+            .get(level_int)
+            .expect("Optimization levels above 3 are not valid");
+            opt_level = *level;
+            continue;
+        }
+        file_path = Some(arg);
+    }
+    let Some(file_path) = file_path else {
         eprintln!("Usage: {} <file.pie>", env::args().next().unwrap());
         std::process::exit(1);
     };
@@ -68,7 +92,7 @@ fn main() -> anyhow::Result<()> {
     // JIT compile and execute
     let ee = cg
         .module
-        .create_jit_execution_engine(OptimizationLevel::None)
+        .create_jit_execution_engine(opt_level)
         .map_err(|e| anyhow::anyhow!("failed to create execution engine: {}", e))?;
     // Map declared runtime function symbols in the JIT module to the actual
     // runtime implementations in this process so calls (e.g., `pie_print`)
