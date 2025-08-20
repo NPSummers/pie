@@ -23,8 +23,7 @@ fn main() -> anyhow::Result<()> {
     let mut file_path = None;
     let mut opt_level = OptimizationLevel::None;
     for arg in env::args().skip(1) {
-        if arg.starts_with("-O") {
-            let rest = &arg[2..];
+        if let Some(rest) = arg.strip_prefix("-O") {
             if rest.is_empty() {
                 opt_level = OptimizationLevel::Default;
                 continue;

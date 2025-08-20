@@ -1,6 +1,6 @@
 def void main() {
-    let int u = 7;
-    let int r = 11;
+    let int u = std::input::get_int();
+    let int r = std::rand::int_range(0, 10000 - 1);
     let list a = [0] * 10000;
     for i in std::iter::range(0, 10000, 1) {
         for j in std::iter::range(0, 100000, 1) {

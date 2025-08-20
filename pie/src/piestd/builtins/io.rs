@@ -1,5 +1,7 @@
+use std::io::stdin;
+
 use crate::{
-    piestd::builtins::{pie_native_fn, Registry},
+    piestd::builtins::pie_native_fn,
     runtime::{GcBox, GcRef, Value},
 };
 
@@ -9,6 +11,12 @@ pie_native_fn!(pie_print(val: GcRef) pie "std::print"[Any] {
 
 pie_native_fn!(pie_print_err(val: GcRef) pie "std::print_err"[Any] {
     eprintln!("{}", val.value())
+});
+
+pie_native_fn!(pie_input_get_int() pie "std::input::get_int"[] => Int -> Option<GcBox> {
+    let mut buf = String::new();
+    stdin().read_line(&mut buf).ok()?;
+    Some(GcBox::new(Value::Int(buf.trim().parse().ok()?)))
 });
 
 pie_native_fn!(pie_http_get(url_val: GcRef, headers: GcRef) pie "std::http_get"[String, Map] => String -> GcBox {

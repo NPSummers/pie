@@ -1,5 +1,5 @@
 use crate::{
-    piestd::builtins::{pie_native_fn, Registry},
+    piestd::builtins::pie_native_fn,
     runtime::{GcBox, GcRef},
 };
 
