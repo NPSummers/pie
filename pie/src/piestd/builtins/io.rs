@@ -36,7 +36,7 @@ pie_native_fn!(pie_http_get(url_val: GcRef, headers: GcRef) pie "std::http_get"[
     let mut req = ureq::get(url.as_ref());
 
     for (k, v) in headers {
-        req = req.header(k, &v.as_ref().value().to_string());
+        req = req.header(k.as_ref(), &v.as_ref().value().to_string());
     }
 
     match req.call() {

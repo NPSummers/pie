@@ -15,8 +15,18 @@ pub enum Value {
     Bool(bool),
     Str(Cow<'static, str>),
     List(Vec<GcBox>),
-    Map(HashMap<String, GcBox>),
+    Map(HashMap<Cow<'static, str>, GcBox>),
     Iterator(Box<dyn DebugIter>),
+}
+
+impl Value {
+    pub fn as_str(&self) -> Cow<'static, str> {
+        if let Value::Str(s) = self {
+            Cow::clone(s)
+        } else {
+            self.to_string().into()
+        }
+    }
 }
 
 impl PartialEq for Value {

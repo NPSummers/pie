@@ -98,13 +98,13 @@ impl<Inner> BorrowWrapper<Inner> {
 
 #[derive(Debug, Clone)]
 struct MapIter {
-    borrow: BorrowWrapper<HashMap<String, GcBox>>,
-    iter: std::collections::hash_map::Iter<'static, String, GcBox>,
+    borrow: BorrowWrapper<HashMap<Cow<'static, str>, GcBox>>,
+    iter: std::collections::hash_map::Iter<'static, Cow<'static, str>, GcBox>,
 }
 
 impl MapIter {
     pub fn new(rc: Rc<RefCell<Value>>) -> Option<Self> {
-        fn get_map(v: &Value) -> &HashMap<String, GcBox> {
+        fn get_map(v: &Value) -> &HashMap<Cow<'static, str>, GcBox> {
             let Value::Map(m) = v else { unreachable!() };
             m
         }
@@ -113,8 +113,10 @@ impl MapIter {
         let Value::Map(_) = &*val else {
             return None;
         };
-        let borrow =
-            BorrowWrapper::new(rc.clone(), get_map as fn(&Value) -> &HashMap<String, GcBox>);
+        let borrow = BorrowWrapper::new(
+            rc.clone(),
+            get_map as fn(&Value) -> &HashMap<Cow<'static, str>, GcBox>,
+        );
         // SAFETY: This reference will only exist while the Ref/Rc it references is valid, by being
         // stored in the same struct
         let r = unsafe { borrow.get_static_ref() };
