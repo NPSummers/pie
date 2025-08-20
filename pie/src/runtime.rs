@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::fmt::{Debug, Display};
 use std::ptr::NonNull;
 use std::rc::Rc;
+#[cfg(debug_assertions)]
 use std::sync::atomic::AtomicIsize;
 
 #[derive(Debug)]
