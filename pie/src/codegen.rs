@@ -742,9 +742,7 @@ impl<'ctx> CodeGen<'ctx> {
                     .left()
                     .unwrap();
                 for value in values {
-                    let val = self
-                        .codegen_expr(value, locals)
-                        .unwrap_or_else(|| self.registry.ptr_type().const_null().into());
+                    let val = self.codegen_expr(value, locals).unwrap();
                     self.builder
                         .build_call(list_push, &[list.into(), val.into()], "list_lit_push")
                         .unwrap();

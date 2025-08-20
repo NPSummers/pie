@@ -7,6 +7,10 @@ pie_native_fn!(pie_print(val: GcRef) pie "std::print"[Any] {
     println!("{}", val.value())
 });
 
+pie_native_fn!(pie_print_err(val: GcRef) pie "std::print_err"[Any] {
+    eprintln!("{}", val.value())
+});
+
 pie_native_fn!(pie_http_get(url_val: GcRef, headers: GcRef) pie "std::http_get"[String, Map] => String -> GcBox {
     let Value::Str(url) = &*url_val.value() else {
         return "http error: expected url to be a string".into();
