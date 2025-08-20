@@ -2,7 +2,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt::{Debug, Display};
-use std::mem::ManuallyDrop;
+// use std::mem::ManuallyDrop; // no longer needed
 use std::ptr::NonNull;
 use std::rc::Rc;
 
@@ -113,7 +113,7 @@ impl Display for Value {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 #[repr(transparent)]
 /// A non-none reference counted value
 pub struct GcBox(NonNull<RefCell<Value>>);
@@ -121,6 +121,15 @@ pub struct GcBox(NonNull<RefCell<Value>>);
 impl Drop for GcBox {
     fn drop(&mut self) {
         unsafe { Rc::from_raw(self.0.as_ptr()) };
+    }
+}
+
+impl Clone for GcBox {
+    fn clone(&self) -> Self {
+        // Ensure the underlying Rc strong count is incremented so both
+        // GcBox instances own a strong reference.
+        unsafe { Rc::increment_strong_count(self.0.as_ptr()) };
+        GcBox(self.0)
     }
 }
 
@@ -201,9 +210,13 @@ impl GcRef<'_> {
 
     pub fn new_rc(&self) -> Rc<RefCell<Value>> {
         unsafe {
-            let rc = self.new_box_noincrement();
-            Rc::increment_strong_count(rc.as_ptr());
-            rc
+            // Reconstruct an Rc from the raw pointer, clone it to create a new
+            // owning handle, then re-leak the original so the original raw
+            // token remains available for GcBox::drop.
+            let rc_original = self.new_box_noincrement();
+            let rc_clone = rc_original.clone();
+            let _ = Rc::into_raw(rc_original);
+            rc_clone
         }
     }
 
@@ -213,8 +226,7 @@ impl GcRef<'_> {
 
     pub fn new_box(&self) -> GcBox {
         let rc = self.new_rc();
-        let rc = ManuallyDrop::new(rc);
-        let ptr = Rc::as_ptr(&rc);
+        let ptr = Rc::into_raw(rc);
         GcBox(unsafe { NonNull::new_unchecked(ptr.cast_mut()) })
     }
 

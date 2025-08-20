@@ -1,0 +1,11 @@
+
+def void main() {
+    let int i = 0;
+    while i < 1000000 {
+        let int mod = i % 100000;
+        if mod == 0 {
+            std::print("mod is 0");
+        }
+        i = i + 1;
+    }
+}

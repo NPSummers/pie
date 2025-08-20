@@ -228,7 +228,7 @@ impl<'s> Parser<'s> {
                 Token::Minus => BinaryOp::Sub,
                 Token::Star => BinaryOp::Mul,
                 Token::Slash => BinaryOp::Div,
-                Token::Eq => BinaryOp::Eq,
+                Token::EqEq => BinaryOp::Eq,
                 Token::Ne => BinaryOp::Ne,
                 Token::Gt => BinaryOp::Gt,
                 Token::Lt => BinaryOp::Lt,
@@ -268,6 +268,95 @@ impl<'s> Parser<'s> {
             return Err(self.err_here(ErrorKind::Parse, "unexpected EOF in statement"));
         };
         match first {
+            Token::If => {
+                let cond = self.parse_expression()?;
+                let Some(Token::LBrace) = self.advance() else {
+                    return Err(self.err_here(ErrorKind::Parse, "expected '{' after if condition"));
+                };
+                let mut then_body = Vec::new();
+                while !self.consume_if(|t| matches!(t, Token::RBrace)) {
+                    let statement = self.parse_statement()?;
+                    then_body.push(statement);
+                }
+                let mut else_body = None;
+                if self.consume_if(|t| matches!(t, Token::Elif)) {
+                    // Parse nested if as else-body single statement
+                    self.unconsume_one(); // put back Elif so recursive call sees it as first token
+                                          // Transform 'elif' into 'if' by advancing once to consume Elif and treat it like If
+                    let _ = self.advance(); // consume Elif
+                                            // Now parse the rest as if after 'if'
+                                            // Reuse the same machinery by constructing a nested if statement
+                    let nested_cond = self.parse_expression()?;
+                    let Some(Token::LBrace) = self.advance() else {
+                        return Err(
+                            self.err_here(ErrorKind::Parse, "expected '{' after elif condition")
+                        );
+                    };
+                    let mut nested_then = Vec::new();
+                    while !self.consume_if(|t| matches!(t, Token::RBrace)) {
+                        let s = self.parse_statement()?;
+                        nested_then.push(s);
+                    }
+                    let mut nested_else = None;
+                    // Support cascading elif/else
+                    if self.consume_if(|t| matches!(t, Token::Elif)) {
+                        self.unconsume_one();
+                        let _ = self.advance(); // consume Elif
+                        let nn_cond = self.parse_expression()?;
+                        let Some(Token::LBrace) = self.advance() else {
+                            return Err(self
+                                .err_here(ErrorKind::Parse, "expected '{' after elif condition"));
+                        };
+                        let mut nn_then = Vec::new();
+                        while !self.consume_if(|t| matches!(t, Token::RBrace)) {
+                            let s = self.parse_statement()?;
+                            nn_then.push(s);
+                        }
+                        nested_else = Some(vec![Statement::If {
+                            cond: nn_cond,
+                            then_body: nn_then,
+                            else_body: None,
+                        }]);
+                    } else if self.consume_if(|t| matches!(t, Token::Else)) {
+                        let Some(Token::LBrace) = self.advance() else {
+                            return Err(self.err_here(ErrorKind::Parse, "expected '{' after else"));
+                        };
+                        let mut eb = Vec::new();
+                        while !self.consume_if(|t| matches!(t, Token::RBrace)) {
+                            let s = self.parse_statement()?;
+                            eb.push(s);
+                        }
+                        nested_else = Some(eb);
+                    }
+                    let nested_if = Statement::If {
+                        cond: nested_cond,
+                        then_body: nested_then,
+                        else_body: nested_else,
+                    };
+                    else_body = Some(vec![nested_if]);
+                } else if self.consume_if(|t| matches!(t, Token::Else)) {
+                    if self.consume_if(|t| matches!(t, Token::If)) {
+                        // else if -> parse as nested if
+                        let nested_if = self.parse_statement()?;
+                        else_body = Some(vec![nested_if]);
+                    } else {
+                        let Some(Token::LBrace) = self.advance() else {
+                            return Err(self.err_here(ErrorKind::Parse, "expected '{' after else"));
+                        };
+                        let mut eb = Vec::new();
+                        while !self.consume_if(|t| matches!(t, Token::RBrace)) {
+                            let s = self.parse_statement()?;
+                            eb.push(s);
+                        }
+                        else_body = Some(eb);
+                    }
+                }
+                Ok(Statement::If {
+                    cond,
+                    then_body,
+                    else_body,
+                })
+            }
             Token::Let => {
                 let Some(Token::Ident(typ)) = self.advance() else {
                     return Err(self.err_here(ErrorKind::Parse, "expected a type after 'let'"));

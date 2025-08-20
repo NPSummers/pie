@@ -1,0 +1,13 @@
+
+
+
+def void main() {
+    let int x = 0;
+    if x > 0 {
+        std::print("pos");
+    } elif x == 0 {
+        std::print("zero");
+    } else {
+        std::print("neg");
+    }
+}

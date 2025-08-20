@@ -161,3 +161,70 @@ pie_native_fn!(pie_unary_not(val: GcRef) -> Option<GcBox> {
         Iterator(_) => return None,
     })
 });
+
+// In-place numeric ops: mutate destination Value to hold the result to avoid allocating a new GcBox
+pie_native_fn!(pie_add_in_place(dst: GcRef, src: GcRef) pie "std::num::add_in_place"[Any, Any] {
+    use Value::*;
+    let mut d = dst.value_mut();
+    let sref = src.value();
+    *d = match (&*d, &*sref) {
+        (Int(a), Int(b)) => Int(a + b),
+        (Float(a), Float(b)) => Float(a + b),
+        (Float(a), Int(b)) => Float(a + *b as f64),
+        (Int(a), Float(b)) => Float(*a as f64 + b),
+        (Str(a), other) => Str(format!("{a}{other}")),
+        (other, Str(b)) => Str(format!("{other}{b}")),
+        _ => return,
+    }
+});
+
+pie_native_fn!(pie_sub_in_place(dst: GcRef, src: GcRef) pie "std::num::sub_in_place"[Any, Any] {
+    use Value::*;
+    let mut d = dst.value_mut();
+    let sref = src.value();
+    *d = match (&*d, &*sref) {
+        (Int(a), Int(b)) => Int(a - b),
+        (Float(a), Float(b)) => Float(a - b),
+        (Float(a), Int(b)) => Float(a - *b as f64),
+        (Int(a), Float(b)) => Float(*a as f64 - b),
+        _ => return,
+    }
+});
+
+pie_native_fn!(pie_mul_in_place(dst: GcRef, src: GcRef) pie "std::num::mul_in_place"[Any, Any] {
+    use Value::*;
+    let mut d = dst.value_mut();
+    let sref = src.value();
+    *d = match (&*d, &*sref) {
+        (Int(a), Int(b)) => Int(a * b),
+        (Float(a), Float(b)) => Float(a * b),
+        (Float(a), Int(b)) => Float(a * *b as f64),
+        (Int(a), Float(b)) => Float(*a as f64 * b),
+        _ => return,
+    }
+});
+
+pie_native_fn!(pie_div_in_place(dst: GcRef, src: GcRef) pie "std::num::div_in_place"[Any, Any] {
+    use Value::*;
+    let mut d = dst.value_mut();
+    let sref = src.value();
+    *d = match (&*d, &*sref) {
+        (_, Int(0)) => return,
+        (Int(a), Int(b)) => Int(a / b),
+        (Float(a), Float(b)) => Float(a / b),
+        (Float(a), Int(b)) => Float(a / *b as f64),
+        (Int(a), Float(b)) => Float(*a as f64 / b),
+        _ => return,
+    }
+});
+
+// Helpers for numeric for-loops: extract and set ints without allocating
+pie_native_fn!(pie_int_to_i64(val: GcRef) -> i64 {
+    let &Value::Int(i) = &*val.value() else { return 0 };
+    i
+});
+
+pie_native_fn!(pie_int_set_in_place(dst: GcRef, v: i64) {
+    let Value::Int(ref mut i) = &mut *dst.value_mut() else { return };
+    *i = v;
+});

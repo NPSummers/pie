@@ -84,6 +84,11 @@ pub enum Statement<'s> {
         cond: Expression<'s>,
         body: Vec<Statement<'s>>,
     },
+    If {
+        cond: Expression<'s>,
+        then_body: Vec<Statement<'s>>,
+        else_body: Option<Vec<Statement<'s>>>,
+    },
     Let {
         typ: TypeName<'s>,
         name: &'s str,

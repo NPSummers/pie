@@ -37,3 +37,10 @@ jobs:
           CC: clang-17
           CXX: clang++-17
         run: cargo run --manifest-path pie/Cargo.toml -- examples/working_example.pie
+
+      - name: Run 1Bnested
+        env:
+          LLVM_SYS_170_PREFIX: /usr/lib/llvm-17
+          CC: clang-17
+          CXX: clang++-17
+        run: cargo run --manifest-path pie/Cargo.toml -- examples/1Bnested.pie

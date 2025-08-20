@@ -44,6 +44,65 @@ impl<'ctx> CodeGen<'ctx> {
         }
     }
 
+    fn build_inc_ref(&self, val: BasicValueEnum<'ctx>) {
+        let f = self.module.get_function("pie_inc_ref").expect("inc_ref");
+        let ptr = val.into_pointer_value();
+        let is_null = self
+            .builder
+            .build_is_null(ptr, "inc_ref_is_null")
+            .expect("is_null");
+        let current_block = self.builder.get_insert_block().expect("block");
+        let func = current_block.get_parent().expect("parent func");
+        let then_bb = self.context.append_basic_block(func, "inc_ref_then");
+        let cont_bb = self.context.append_basic_block(func, "inc_ref_cont");
+        self.builder
+            .build_conditional_branch(is_null, cont_bb, then_bb)
+            .unwrap();
+        self.builder.position_at_end(then_bb);
+        let _ = self.builder.build_call(f, &[ptr.into()], "inc_ref_call");
+        self.builder.build_unconditional_branch(cont_bb).unwrap();
+        self.builder.position_at_end(cont_bb);
+    }
+
+    fn build_dec_ref(&self, val: BasicValueEnum<'ctx>) {
+        let f = self.module.get_function("pie_dec_ref").expect("dec_ref");
+        let ptr = val.into_pointer_value();
+        let is_null = self
+            .builder
+            .build_is_null(ptr, "dec_ref_is_null")
+            .expect("is_null");
+        let current_block = self.builder.get_insert_block().expect("block");
+        let func = current_block.get_parent().expect("parent func");
+        let then_bb = self.context.append_basic_block(func, "dec_ref_then");
+        let cont_bb = self.context.append_basic_block(func, "dec_ref_cont");
+        self.builder
+            .build_conditional_branch(is_null, cont_bb, then_bb)
+            .unwrap();
+        self.builder.position_at_end(then_bb);
+        let _ = self.builder.build_call(f, &[ptr.into()], "dec_ref_call");
+        self.builder.build_unconditional_branch(cont_bb).unwrap();
+        self.builder.position_at_end(cont_bb);
+    }
+
+    fn store_owned_ptr(
+        &self,
+        dest: PointerValue<'ctx>,
+        new_val: BasicValueEnum<'ctx>,
+        new_val_is_ident: bool,
+    ) {
+        // Release previous value stored in dest (if any)
+        let old = self
+            .builder
+            .build_load(self.registry.ptr_type(), dest, "old_val")
+            .expect("load old");
+        self.build_dec_ref(old);
+        // If we are copying from an identifier (another owning slot), bump refcount
+        if new_val_is_ident {
+            self.build_inc_ref(new_val);
+        }
+        let _ = self.builder.build_store(dest, new_val);
+    }
+
     pub fn compile_program(&mut self, prog: &Program) -> Result<(), String> {
         // Compile all modules and functions
         for item in &prog.items {
@@ -79,8 +138,6 @@ impl<'ctx> CodeGen<'ctx> {
             return Err("PIE main function not found after compilation".into());
         }
 
-        self.module.print_to_stderr();
-
         // Verify the module
         if let Err(errors) = self.module.verify() {
             return Err(format!("LLVM module verification failed: {}", errors));
@@ -99,6 +156,9 @@ impl<'ctx> CodeGen<'ctx> {
                 .builder
                 .build_alloca(self.registry.ptr_type(), name)
                 .unwrap();
+            // Initialize to null so releases are safe
+            let null = self.registry.ptr_type().const_null().as_basic_value_enum();
+            let _ = self.builder.build_store(ptr, null);
             locals.insert(name, ptr);
         };
         for stmt in stmts {
@@ -112,6 +172,16 @@ impl<'ctx> CodeGen<'ctx> {
                 }
                 Statement::While { body, .. } => {
                     self.find_variables(locals, body.iter());
+                }
+                Statement::If {
+                    then_body,
+                    else_body,
+                    ..
+                } => {
+                    self.find_variables(locals, then_body.iter());
+                    if let Some(else_body) = else_body {
+                        self.find_variables(locals, else_body.iter());
+                    }
                 }
                 Statement::Assignment { target, .. } => {
                     let Expression::Ident(var) = target else {
@@ -153,7 +223,11 @@ impl<'ctx> CodeGen<'ctx> {
         let mut locals: HashMap<&str, PointerValue<'ctx>> = HashMap::new();
         for (idx, (_t, pname)) in func.params.iter().enumerate() {
             let alloca = self.builder.build_alloca(ptr_type, pname).expect("alloca");
+            // Initialize to null for safety, then store parameter (after inc_ref)
+            let null = ptr_type.const_null().as_basic_value_enum();
+            let _ = self.builder.build_store(alloca, null);
             let param = fnv.get_nth_param(idx as u32).unwrap();
+            self.build_inc_ref(param);
             let _ = self.builder.build_store(alloca, param);
             locals.insert(pname, alloca);
         }
@@ -195,15 +269,185 @@ impl<'ctx> CodeGen<'ctx> {
                 var,
                 body,
             } => {
-                let iterable = self
+                // Special-case: numeric range loops compile to non-allocating integer loop
+                if let Expression::Call { callee, args } = iterable {
+                    if let Expression::ModuleAccess { components } = &**callee {
+                        if components.as_slice() == ["std", "iter", "range"] && args.len() == 3 {
+                            let ptr_t = self.registry.ptr_type();
+                            let i64_t = self.context.i64_type();
+                            let fn_int_to_i64 = self.module.get_function("pie_int_to_i64").unwrap();
+                            let fn_int_new = self.module.get_function("pie_int_new").unwrap();
+                            let fn_int_set_in_place =
+                                self.module.get_function("pie_int_set_in_place").unwrap();
+
+                            // Compile args and extract i64s; dec_ref temps if needed
+                            let mut compiled_args = Vec::with_capacity(3);
+                            let mut should_dec = Vec::with_capacity(3);
+                            for a in args.iter() {
+                                let is_ident = matches!(a, Expression::Ident(_));
+                                let av = self.codegen_expr(a, locals).expect("range arg expr");
+                                compiled_args.push((av, is_ident));
+                                should_dec.push(!is_ident);
+                            }
+
+                            let start_i = self
+                                .builder
+                                .build_call(fn_int_to_i64, &[compiled_args[0].0.into()], "start_i")
+                                .expect("call");
+                            let start_i = start_i
+                                .try_as_basic_value()
+                                .left()
+                                .unwrap()
+                                .into_int_value();
+                            let stop_i = self
+                                .builder
+                                .build_call(fn_int_to_i64, &[compiled_args[1].0.into()], "stop_i")
+                                .expect("call");
+                            let stop_i =
+                                stop_i.try_as_basic_value().left().unwrap().into_int_value();
+                            let step_i = self
+                                .builder
+                                .build_call(fn_int_to_i64, &[compiled_args[2].0.into()], "step_i")
+                                .expect("call");
+                            let step_i =
+                                step_i.try_as_basic_value().left().unwrap().into_int_value();
+
+                            // Dec refs on temporary arg values
+                            for (idx, dec) in should_dec.into_iter().enumerate() {
+                                if dec {
+                                    self.build_dec_ref(compiled_args[idx].0);
+                                }
+                            }
+
+                            let var_alloca = *locals
+                                .get(var)
+                                .expect("a variable to have been previously allocated with alloca");
+
+                            // Create loop variable GcBox and store into var slot
+                            let init_box = self
+                                .builder
+                                .build_call(fn_int_new, &[start_i.into()], "for_range_var_init")
+                                .expect("int new");
+                            let init_box = init_box.try_as_basic_value().left().unwrap();
+                            self.store_owned_ptr(var_alloca, init_box, false);
+
+                            // i64 loop index alloca
+                            let i_alloca = self.builder.build_alloca(i64_t, "i").expect("alloca i");
+                            let _ = self.builder.build_store(i_alloca, start_i);
+
+                            // Build loop blocks
+                            let loop_header =
+                                self.context.append_basic_block(fnv, "for_range_header");
+                            let loop_then = self.context.append_basic_block(fnv, "for_range_then");
+                            let loop_after =
+                                self.context.append_basic_block(fnv, "for_range_after");
+                            self.builder
+                                .build_unconditional_branch(loop_header)
+                                .unwrap();
+                            self.builder.position_at_end(loop_header);
+
+                            // Compute condition: (step>0 && i<stop) || (step<=0 && i>stop)
+                            let i_cur = self
+                                .builder
+                                .build_load(i64_t, i_alloca, "i_cur")
+                                .unwrap()
+                                .into_int_value();
+                            let step_pos = self
+                                .builder
+                                .build_int_compare(
+                                    inkwell::IntPredicate::SGT,
+                                    step_i,
+                                    i64_t.const_zero(),
+                                    "step_pos",
+                                )
+                                .unwrap();
+                            let step_le = self
+                                .builder
+                                .build_int_compare(
+                                    inkwell::IntPredicate::SLE,
+                                    step_i,
+                                    i64_t.const_zero(),
+                                    "step_le",
+                                )
+                                .unwrap();
+                            let cmp_lt = self
+                                .builder
+                                .build_int_compare(
+                                    inkwell::IntPredicate::SLT,
+                                    i_cur,
+                                    stop_i,
+                                    "i_lt_stop",
+                                )
+                                .unwrap();
+                            let cmp_gt = self
+                                .builder
+                                .build_int_compare(
+                                    inkwell::IntPredicate::SGT,
+                                    i_cur,
+                                    stop_i,
+                                    "i_gt_stop",
+                                )
+                                .unwrap();
+                            let cond1 = self.builder.build_and(step_pos, cmp_lt, "cond1").unwrap();
+                            let cond2 = self.builder.build_and(step_le, cmp_gt, "cond2").unwrap();
+                            let cond = self.builder.build_or(cond1, cond2, "loop_cond").unwrap();
+                            self.builder
+                                .build_conditional_branch(cond, loop_then, loop_after)
+                                .unwrap();
+
+                            // Then block: set loop var value and body
+                            self.builder.position_at_end(loop_then);
+                            // load loop var ptr
+                            let var_ptr = self
+                                .builder
+                                .build_load(ptr_t, var_alloca, "load_for_var")
+                                .unwrap();
+                            let _ = self.builder.build_call(
+                                fn_int_set_in_place,
+                                &[var_ptr.into(), i_cur.into()],
+                                "set_loop_var",
+                            );
+
+                            locals.insert(var, var_alloca);
+                            for stmt in body {
+                                self.codegen_stmt(locals, func, fnv, stmt);
+                            }
+                            // i += step
+                            let i_next =
+                                self.builder.build_int_add(i_cur, step_i, "i_next").unwrap();
+                            let _ = self.builder.build_store(i_alloca, i_next);
+                            self.builder
+                                .build_unconditional_branch(loop_header)
+                                .unwrap();
+                            locals.remove(var);
+
+                            // After block
+                            self.builder.position_at_end(loop_after);
+                            // Release the final value held in the loop variable slot
+                            let for_var_final = self
+                                .builder
+                                .build_load(self.registry.ptr_type(), var_alloca, "for_var_final")
+                                .expect("load for var at loop end");
+                            self.build_dec_ref(for_var_final);
+                            return GeneratedStatement::Void;
+                        }
+                    }
+                }
+
+                // Fallback: generic iterator-based for
+                let iterable_is_ident = matches!(iterable, Expression::Ident(_));
+                let iterable_val = self
                     .codegen_expr(iterable, locals)
                     .expect("Cannot iterate over a void expression");
                 let iter_new = self.module.get_function("pie_iter_new").unwrap();
                 let iterable = self
                     .builder
-                    .build_call(iter_new, &[iterable.into()], "iternew")
+                    .build_call(iter_new, &[iterable_val.into()], "iternew")
                     .expect("create call to create iterator");
                 let iterable = iterable.try_as_basic_value().left().unwrap();
+                if !iterable_is_ident {
+                    self.build_dec_ref(iterable_val);
+                }
 
                 let var_alloca = *locals
                     .get(var)
@@ -222,7 +466,8 @@ impl<'ctx> CodeGen<'ctx> {
                     .left()
                     .unwrap()
                     .into_pointer_value();
-                self.builder.build_store(var_alloca, next).unwrap();
+                let next_bv = next.as_basic_value_enum();
+                self.store_owned_ptr(var_alloca, next_bv, false);
 
                 let is_null = self.builder.build_is_null(next, "iter_is_null").unwrap();
                 let loop_hasnext = self.context.append_basic_block(fnv, "for_loop_hasnext");
@@ -240,12 +485,19 @@ impl<'ctx> CodeGen<'ctx> {
                 self.builder.build_unconditional_branch(loop_bb).unwrap();
                 locals.remove(var);
                 self.builder.position_at_end(loop_after);
+                let for_var_final = self
+                    .builder
+                    .build_load(self.registry.ptr_type(), var_alloca, "for_var_final")
+                    .expect("load for var at loop end");
+                self.build_dec_ref(for_var_final);
+                self.build_dec_ref(iterable);
                 GeneratedStatement::Void
             }
             Statement::While { cond, body } => {
                 let while_bb = self.context.append_basic_block(fnv, "while_loop");
                 self.builder.build_unconditional_branch(while_bb).unwrap();
                 self.builder.position_at_end(while_bb);
+                let cond_is_ident = matches!(cond, Expression::Ident(_));
                 let cond = self
                     .codegen_expr(cond, locals)
                     .expect("a non-void condition in a while loop");
@@ -258,6 +510,10 @@ impl<'ctx> CodeGen<'ctx> {
                     .left()
                     .unwrap()
                     .into_pointer_value();
+                // Release the temporary produced by the condition expression if it wasn't an identifier
+                if !cond_is_ident {
+                    self.build_dec_ref(cond);
+                }
                 let is_false = self
                     .builder
                     .build_is_null(truthy, "while_is_false")
@@ -275,6 +531,58 @@ impl<'ctx> CodeGen<'ctx> {
                 self.builder.position_at_end(while_after);
                 GeneratedStatement::Void
             }
+            Statement::If {
+                cond,
+                then_body,
+                else_body,
+            } => {
+                let cond_is_ident = matches!(cond, Expression::Ident(_));
+                let cond_val = self
+                    .codegen_expr(cond, locals)
+                    .expect("a non-void condition in an if statement");
+                let truthy = self.module.get_function("pie_internal_truthy").unwrap();
+                let truthy = self
+                    .builder
+                    .build_call(truthy, &[cond_val.into()], "if_cond_truthy")
+                    .unwrap()
+                    .try_as_basic_value()
+                    .left()
+                    .unwrap()
+                    .into_pointer_value();
+                if !cond_is_ident {
+                    self.build_dec_ref(cond_val);
+                }
+
+                let current_block = self.builder.get_insert_block().unwrap();
+                let fnv = current_block.get_parent().unwrap();
+                let then_bb = self.context.append_basic_block(fnv, "if_then");
+                let else_bb = self.context.append_basic_block(fnv, "if_else");
+                let cont_bb = self.context.append_basic_block(fnv, "if_cont");
+                let is_false = self.builder.build_is_null(truthy, "if_is_false").unwrap();
+                self.builder
+                    .build_conditional_branch(is_false, else_bb, then_bb)
+                    .unwrap();
+
+                // then
+                self.builder.position_at_end(then_bb);
+                for s in then_body {
+                    self.codegen_stmt(locals, func, fnv, s);
+                }
+                self.builder.build_unconditional_branch(cont_bb).unwrap();
+
+                // else
+                self.builder.position_at_end(else_bb);
+                if let Some(else_body) = else_body {
+                    for s in else_body {
+                        self.codegen_stmt(locals, func, fnv, s);
+                    }
+                }
+                self.builder.build_unconditional_branch(cont_bb).unwrap();
+
+                // cont
+                self.builder.position_at_end(cont_bb);
+                GeneratedStatement::Void
+            }
             Statement::Let {
                 typ: _typ,
                 name,
@@ -285,7 +593,8 @@ impl<'ctx> CodeGen<'ctx> {
                     let alloca = *locals
                         .get(name)
                         .expect("a variable to have been previously allocated with alloca");
-                    let _ = self.builder.build_store(alloca, val);
+                    let rhs_is_ident = matches!(expr, Expression::Ident(_));
+                    self.store_owned_ptr(alloca, val, rhs_is_ident);
                     locals.insert(name, alloca);
                 }
                 GeneratedStatement::Void
@@ -304,64 +613,63 @@ impl<'ctx> CodeGen<'ctx> {
                 let value_val = self.codegen_expr(value, locals).expect("value expression");
 
                 // Handle different assignment operators
-                let result = match op {
+                match op {
+                    AssignOp::Assign => {
+                        let rhs_is_ident = matches!(value, Expression::Ident(_));
+                        self.store_owned_ptr(ptr, value_val, rhs_is_ident);
+                    }
                     AssignOp::Plus => {
-                        let fn_add = self.module.get_function("pie_add").unwrap();
-                        let call = self
-                            .builder
-                            .build_call(
-                                fn_add,
-                                &[current_val.into(), value_val.into()],
-                                "add_result",
-                            )
-                            .expect("call");
-                        call.try_as_basic_value().left().unwrap()
+                        let f = self.module.get_function("pie_add_in_place").unwrap();
+                        let _ = self.builder.build_call(
+                            f,
+                            &[current_val.into(), value_val.into()],
+                            "add_ip",
+                        );
+                        if !matches!(value, Expression::Ident(_)) {
+                            self.build_dec_ref(value_val);
+                        }
                     }
                     AssignOp::Minus => {
-                        let fn_sub = self.module.get_function("pie_sub").unwrap();
-                        let call = self
-                            .builder
-                            .build_call(
-                                fn_sub,
-                                &[current_val.into(), value_val.into()],
-                                "sub_result",
-                            )
-                            .expect("call");
-                        call.try_as_basic_value().left().unwrap()
+                        let f = self.module.get_function("pie_sub_in_place").unwrap();
+                        let _ = self.builder.build_call(
+                            f,
+                            &[current_val.into(), value_val.into()],
+                            "sub_ip",
+                        );
+                        if !matches!(value, Expression::Ident(_)) {
+                            self.build_dec_ref(value_val);
+                        }
                     }
                     AssignOp::Star => {
-                        let fn_mul = self.module.get_function("pie_mul").unwrap();
-                        let call = self
-                            .builder
-                            .build_call(
-                                fn_mul,
-                                &[current_val.into(), value_val.into()],
-                                "mul_result",
-                            )
-                            .expect("call");
-                        call.try_as_basic_value().left().unwrap()
+                        let f = self.module.get_function("pie_mul_in_place").unwrap();
+                        let _ = self.builder.build_call(
+                            f,
+                            &[current_val.into(), value_val.into()],
+                            "mul_ip",
+                        );
+                        if !matches!(value, Expression::Ident(_)) {
+                            self.build_dec_ref(value_val);
+                        }
                     }
                     AssignOp::Slash => {
-                        let fn_div = self.module.get_function("pie_div").unwrap();
-                        let call = self
-                            .builder
-                            .build_call(
-                                fn_div,
-                                &[current_val.into(), value_val.into()],
-                                "sub_result",
-                            )
-                            .expect("call");
-                        call.try_as_basic_value().left().unwrap()
+                        let f = self.module.get_function("pie_div_in_place").unwrap();
+                        let _ = self.builder.build_call(
+                            f,
+                            &[current_val.into(), value_val.into()],
+                            "div_ip",
+                        );
+                        if !matches!(value, Expression::Ident(_)) {
+                            self.build_dec_ref(value_val);
+                        }
                     }
-                    AssignOp::Assign => value_val,
-                };
-
-                // Store the result back to the target
-                let _ = self.builder.build_store(ptr, result);
+                }
                 GeneratedStatement::Void
             }
             Statement::Expr(e) => {
-                let _ = self.codegen_expr(e, locals);
+                if let Some(v) = self.codegen_expr(e, locals) {
+                    // Discarding an owned temporary: release it
+                    self.build_dec_ref(v);
+                }
                 GeneratedStatement::Void
             }
             Statement::Return(Some(e)) => {
@@ -371,6 +679,8 @@ impl<'ctx> CodeGen<'ctx> {
                 if matches!(func.ret, TypeName::Void) {
                     self.builder.build_return(None).unwrap();
                 } else {
+                    // Return transfers ownership to the caller; bump refcount
+                    self.build_inc_ref(v);
                     self.builder.build_return(Some(&v)).unwrap();
                 }
                 GeneratedStatement::Return(Some(v))
@@ -461,8 +771,213 @@ impl<'ctx> CodeGen<'ctx> {
                 Some(loaded)
             }
             Expression::Binary(lhs, op, rhs) => {
-                // evaluate both sides
+                // Constant-fold simple numeric ops and comparisons on literals
+                if let (Expression::Int(li), Expression::Int(ri)) = (&**lhs, &**rhs) {
+                    let i64_t = self.context.i64_type();
+                    match op {
+                        BinaryOp::Add => {
+                            let f = self.module.get_function("pie_int_new").unwrap();
+                            let cv = i64_t.const_int((*li as i128 + *ri as i128) as u64, true);
+                            let call = self
+                                .builder
+                                .build_call(f, &[cv.into()], "cf_i_add")
+                                .unwrap();
+                            return call.try_as_basic_value().left();
+                        }
+                        BinaryOp::Sub => {
+                            let f = self.module.get_function("pie_int_new").unwrap();
+                            let cv = i64_t.const_int((*li as i128 - *ri as i128) as u64, true);
+                            let call = self
+                                .builder
+                                .build_call(f, &[cv.into()], "cf_i_sub")
+                                .unwrap();
+                            return call.try_as_basic_value().left();
+                        }
+                        BinaryOp::Mul => {
+                            let f = self.module.get_function("pie_int_new").unwrap();
+                            let cv = i64_t.const_int((*li as i128 * *ri as i128) as u64, true);
+                            let call = self
+                                .builder
+                                .build_call(f, &[cv.into()], "cf_i_mul")
+                                .unwrap();
+                            return call.try_as_basic_value().left();
+                        }
+                        BinaryOp::Div => {
+                            if *ri != 0 {
+                                let f = self.module.get_function("pie_int_new").unwrap();
+                                let cv = i64_t.const_int((li / ri) as u64, true);
+                                let call = self
+                                    .builder
+                                    .build_call(f, &[cv.into()], "cf_i_div")
+                                    .unwrap();
+                                return call.try_as_basic_value().left();
+                            }
+                        }
+                        BinaryOp::Rem => {
+                            if *ri != 0 {
+                                let f = self.module.get_function("pie_int_new").unwrap();
+                                let cv = i64_t.const_int((li % ri) as u64, true);
+                                let call = self
+                                    .builder
+                                    .build_call(f, &[cv.into()], "cf_i_rem")
+                                    .unwrap();
+                                return call.try_as_basic_value().left();
+                            }
+                        }
+                        BinaryOp::Eq => {
+                            let f = self.module.get_function("pie_bool_new").unwrap();
+                            let cv = self.context.i8_type().const_int((li == ri) as u64, false);
+                            let call = self.builder.build_call(f, &[cv.into()], "cf_i_eq").unwrap();
+                            return call.try_as_basic_value().left();
+                        }
+                        BinaryOp::Ne => {
+                            let f = self.module.get_function("pie_bool_new").unwrap();
+                            let cv = self.context.i8_type().const_int((li != ri) as u64, false);
+                            let call = self.builder.build_call(f, &[cv.into()], "cf_i_ne").unwrap();
+                            return call.try_as_basic_value().left();
+                        }
+                        BinaryOp::Lt => {
+                            let f = self.module.get_function("pie_bool_new").unwrap();
+                            let cv = self.context.i8_type().const_int((li < ri) as u64, false);
+                            let call = self.builder.build_call(f, &[cv.into()], "cf_i_lt").unwrap();
+                            return call.try_as_basic_value().left();
+                        }
+                        BinaryOp::Gt => {
+                            let f = self.module.get_function("pie_bool_new").unwrap();
+                            let cv = self.context.i8_type().const_int((li > ri) as u64, false);
+                            let call = self.builder.build_call(f, &[cv.into()], "cf_i_gt").unwrap();
+                            return call.try_as_basic_value().left();
+                        }
+                        BinaryOp::LtEq => {
+                            let f = self.module.get_function("pie_bool_new").unwrap();
+                            let cv = self.context.i8_type().const_int((li <= ri) as u64, false);
+                            let call = self
+                                .builder
+                                .build_call(f, &[cv.into()], "cf_i_lte")
+                                .unwrap();
+                            return call.try_as_basic_value().left();
+                        }
+                        BinaryOp::GtEq => {
+                            let f = self.module.get_function("pie_bool_new").unwrap();
+                            let cv = self.context.i8_type().const_int((li >= ri) as u64, false);
+                            let call = self
+                                .builder
+                                .build_call(f, &[cv.into()], "cf_i_gte")
+                                .unwrap();
+                            return call.try_as_basic_value().left();
+                        }
+                    }
+                }
+                if let (Expression::Float(lf), Expression::Float(rf)) = (&**lhs, &**rhs) {
+                    let f64_t = self.context.f64_type();
+                    match op {
+                        BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div => {
+                            let f = self.module.get_function("pie_float_new").unwrap();
+                            let val = match op {
+                                BinaryOp::Add => lf + rf,
+                                BinaryOp::Sub => lf - rf,
+                                BinaryOp::Mul => lf * rf,
+                                BinaryOp::Div => lf / rf,
+                                _ => unreachable!(),
+                            };
+                            let cv = f64_t.const_float(val);
+                            let call = self
+                                .builder
+                                .build_call(f, &[cv.into()], "cf_f_bin")
+                                .unwrap();
+                            return call.try_as_basic_value().left();
+                        }
+                        BinaryOp::Eq
+                        | BinaryOp::Ne
+                        | BinaryOp::Lt
+                        | BinaryOp::Gt
+                        | BinaryOp::LtEq
+                        | BinaryOp::GtEq => {
+                            let f = self.module.get_function("pie_bool_new").unwrap();
+                            let v = match op {
+                                BinaryOp::Eq => lf == rf,
+                                BinaryOp::Ne => lf != rf,
+                                BinaryOp::Lt => lf < rf,
+                                BinaryOp::Gt => lf > rf,
+                                BinaryOp::LtEq => lf <= rf,
+                                BinaryOp::GtEq => lf >= rf,
+                                _ => unreachable!(),
+                            };
+                            let cv = self.context.i8_type().const_int(v as u64, false);
+                            let call = self
+                                .builder
+                                .build_call(f, &[cv.into()], "cf_f_cmp")
+                                .unwrap();
+                            return call.try_as_basic_value().left();
+                        }
+                        BinaryOp::Rem => { /* fallthrough to generic path */ }
+                    }
+                }
+
+                // evaluate LHS first
+                let lhs_is_ident = matches!(**lhs, Expression::Ident(_));
                 let left_val = self.codegen_expr(lhs, locals)?;
+
+                // Strength-reduce small constant modulus and/or avoid runtime call
+                if matches!(op, BinaryOp::Rem) {
+                    if let Expression::Int(m) = **rhs {
+                        if m > 0 {
+                            let i64_t = self.context.i64_type();
+                            let fn_int_to_i64 = self.module.get_function("pie_int_to_i64").unwrap();
+                            let fn_int_new = self.module.get_function("pie_int_new").unwrap();
+                            let i_left = self
+                                .builder
+                                .build_call(fn_int_to_i64, &[left_val.into()], "rem_lhs_i64")
+                                .expect("call");
+                            let i_left =
+                                i_left.try_as_basic_value().left().unwrap().into_int_value();
+                            let m_const = i64_t.const_int(m as u64, true);
+
+                            // If modulus is power of two, use (i & (m-1)) for non-negative i; else srem
+                            let result_i = if (m & (m - 1)) == 0 {
+                                let is_neg = self
+                                    .builder
+                                    .build_int_compare(
+                                        inkwell::IntPredicate::SLT,
+                                        i_left,
+                                        i64_t.const_zero(),
+                                        "is_neg",
+                                    )
+                                    .unwrap();
+                                let and_mask = i64_t.const_int((m as u64) - 1, false);
+                                let masked = self
+                                    .builder
+                                    .build_and(i_left, and_mask, "and_mask")
+                                    .unwrap();
+                                let srem = self
+                                    .builder
+                                    .build_int_signed_rem(i_left, m_const, "srem")
+                                    .unwrap();
+                                // select(is_neg, srem, masked)
+                                self.builder
+                                    .build_select(is_neg, srem, masked, "rem_sel")
+                                    .unwrap()
+                                    .into_int_value()
+                            } else {
+                                self.builder
+                                    .build_int_signed_rem(i_left, m_const, "srem")
+                                    .unwrap()
+                            };
+
+                            let boxed = self
+                                .builder
+                                .build_call(fn_int_new, &[result_i.into()], "rem_box")
+                                .expect("call");
+                            if !lhs_is_ident {
+                                self.build_dec_ref(left_val);
+                            }
+                            return boxed.try_as_basic_value().left();
+                        }
+                    }
+                }
+
+                // Generic binary op path
+                let rhs_is_ident = matches!(**rhs, Expression::Ident(_));
                 let right_val = self.codegen_expr(rhs, locals)?;
 
                 let fn_name = match op {
@@ -485,9 +1000,17 @@ impl<'ctx> CodeGen<'ctx> {
                     .builder
                     .build_call(f, &[left_val.into(), right_val.into()], "binop")
                     .expect("call");
+                // Release temporary operands if they are not identifiers
+                if !lhs_is_ident {
+                    self.build_dec_ref(left_val);
+                }
+                if !rhs_is_ident {
+                    self.build_dec_ref(right_val);
+                }
                 call.try_as_basic_value().left()
             }
             Expression::Unary(op, expr) => {
+                let expr_is_ident = matches!(**expr, Expression::Ident(_));
                 let val = self
                     .codegen_expr(expr, locals)
                     .expect("right hand side of a unary expression to be non-void");
@@ -502,6 +1025,9 @@ impl<'ctx> CodeGen<'ctx> {
                     .builder
                     .build_call(f, &[val.into()], "binop")
                     .expect("call");
+                if !expr_is_ident {
+                    self.build_dec_ref(val);
+                }
                 call.try_as_basic_value().left()
             }
             Expression::Call { callee, args } => {
@@ -513,14 +1039,35 @@ impl<'ctx> CodeGen<'ctx> {
                         if let Some(native_func) = self.registry.get_by_std_path(components) {
                             let llvm_func =
                                 self.module.get_function(native_func.native_name).unwrap();
-                            let args: Vec<_> = args
-                                .iter()
-                                .map(|e| self.codegen_expr(e, locals).unwrap().into())
-                                .collect();
+                            let mut compiled_args: Vec<inkwell::values::BasicMetadataValueEnum> =
+                                Vec::with_capacity(args.len());
+                            let mut should_dec: Vec<(
+                                bool,
+                                Option<inkwell::values::BasicValueEnum>,
+                            )> = Vec::with_capacity(args.len());
+                            for a in args {
+                                let is_ident = matches!(a, Expression::Ident(_));
+                                if let Some(av) = self.codegen_expr(a, locals) {
+                                    should_dec.push((!is_ident, Some(av)));
+                                    compiled_args.push(av.into());
+                                } else {
+                                    should_dec.push((false, None));
+                                    compiled_args
+                                        .push(self.registry.ptr_type().const_null().into());
+                                }
+                            }
                             let call = self
                                 .builder
-                                .build_call(llvm_func, &args, &fname)
+                                .build_call(llvm_func, &compiled_args, &fname)
                                 .expect("call");
+                            // Release temporary args
+                            for (dec, val) in should_dec {
+                                if dec {
+                                    if let Some(v) = val {
+                                        self.build_dec_ref(v);
+                                    }
+                                }
+                            }
                             return call.try_as_basic_value().left();
                         }
 
@@ -546,11 +1093,19 @@ impl<'ctx> CodeGen<'ctx> {
                     }
                     Expression::Ident(fname) => {
                         if let Some(f) = self.functions.get(*fname) {
-                            let mut compiled_args = Vec::new();
+                            let mut compiled_args: Vec<inkwell::values::BasicMetadataValueEnum> =
+                                Vec::with_capacity(args.len());
+                            let mut should_dec: Vec<(
+                                bool,
+                                Option<inkwell::values::BasicValueEnum>,
+                            )> = Vec::with_capacity(args.len());
                             for a in args {
+                                let is_ident = matches!(a, Expression::Ident(_));
                                 if let Some(av) = self.codegen_expr(a, locals) {
+                                    should_dec.push((!is_ident, Some(av)));
                                     compiled_args.push(av.into());
                                 } else {
+                                    should_dec.push((false, None));
                                     compiled_args.push(ptr_type.const_null().into());
                                 }
                             }
@@ -558,6 +1113,13 @@ impl<'ctx> CodeGen<'ctx> {
                                 .builder
                                 .build_call(*f, &compiled_args, "call")
                                 .expect("call");
+                            for (dec, val) in should_dec {
+                                if dec {
+                                    if let Some(v) = val {
+                                        self.build_dec_ref(v);
+                                    }
+                                }
+                            }
                             if call.try_as_basic_value().left().is_some() {
                                 return Some(call.try_as_basic_value().left().unwrap());
                             }

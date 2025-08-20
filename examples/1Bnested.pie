@@ -4,13 +4,9 @@ def void main() {
     let list a = [0] * 10000;
     for i in std::iter::range(0, 1000, 1) {
         for j in std::iter::range(0, 100000, 1) {
-            let int temp = std::list::get(a, i);
-            temp += j % u;
-            std::list::set(a, i, temp);
+            std::list::add_in_place(a, i, j % u);
         }
-        let int temp = std::list::get(a, i);
-        temp += r;
-        std::list::set(a, i, temp);
+        std::list::add_in_place(a, i, r);
     }
     std::print(std::list::get(a, r));
 }

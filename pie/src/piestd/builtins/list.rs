@@ -46,6 +46,28 @@ pie_native_fn!(pie_list_push(list: GcRef, val: GcRef) pie "std::list::push"[List
     v.push(val.new_box());
 });
 
+pie_native_fn!(pie_list_add_in_place(list: GcRef, idx: GcRef, delta: GcRef) pie "std::list::add_in_place"[List, Int, Int] {
+    let Value::List(v) = &mut *list.value_mut() else {
+        return;
+    };
+    let &Value::Int(i) = &*idx.value() else {
+        return;
+    };
+    let &Value::Int(d) = &*delta.value() else {
+        return;
+    };
+    if i < 0 || (i as usize) >= v.len() {
+        return;
+    }
+    let cell = &mut v[i as usize];
+    let binding = cell.as_ref();
+    let mut inner = binding.value_mut();
+    let Value::Int(ref mut x) = &mut *inner else {
+        return;
+    };
+    *x += d;
+});
+
 pie_native_fn!(pie_list_pop(list: GcRef) pie "std::list::pop"[List] => Any -> Option<GcBox> {
     let Value::List(v) = &mut *list.value_mut() else {
         return None;

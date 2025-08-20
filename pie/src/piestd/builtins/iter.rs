@@ -45,6 +45,9 @@ pie_native_fn!(pie_iter_range(start: GcRef, stop: GcRef, step: GcRef) pie "std::
     Some(GcBox::new(Value::Iterator(Box::new(iter))))
 });
 
+// A non-allocating integer for-loop: executes a callback for i in [start, stop) with step
+// Removed experimental std::for_int intrinsic for now (function pointer param unsupported by our LLVMTypeEquivalent)
+
 #[derive(Debug)]
 // A wrapper that allows holding a reference to variant of a Value in a GcBox
 struct BorrowWrapper<Inner: 'static> {

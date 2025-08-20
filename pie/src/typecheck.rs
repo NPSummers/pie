@@ -156,6 +156,25 @@ fn check_stmt<'s>(
             locals.insert(*name, declared);
             Ok(())
         }
+        Statement::If {
+            cond,
+            then_body,
+            else_body,
+        } => {
+            let ct = infer_expr_type(cond, locals, modules, path)?;
+            if let Type::Function(_, _) | Type::Void = ct {
+                return Err(format!("invalid type for if condition: {ct:?}"));
+            }
+            for s in then_body {
+                check_stmt(modules, path, locals, func_ret, s)?;
+            }
+            if let Some(else_body) = else_body {
+                for s in else_body {
+                    check_stmt(modules, path, locals, func_ret, s)?;
+                }
+            }
+            Ok(())
+        }
         Statement::While { cond, body } => {
             let cond = infer_expr_type(cond, locals, modules, path)?;
             if let Type::Function(_, _) | Type::Void = cond {
