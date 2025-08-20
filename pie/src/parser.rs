@@ -236,6 +236,9 @@ impl<'s> Parser<'s> {
                 Token::LtEq => BinaryOp::LtEq,
                 Token::Percent => BinaryOp::Rem,
                 Token::And => BinaryOp::And,
+                Token::BitAnd => BinaryOp::BitAnd,
+                Token::BitOr => BinaryOp::BitOr,
+                Token::BitXor => BinaryOp::BitXor,
                 _ => return None,
             })
         }

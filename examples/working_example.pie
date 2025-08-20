@@ -1,51 +1,21 @@
 use pie/std;
 
 module demo {
-    module nested {
-        def string get_question() {
-            return "foo";
-        }
-    }
-
-    def int get_answer() {
-        return 42;
-    }
-    
     def int get_meaning() {
         let int x = 10;
         x += 6;
-        return x+10;
+        return x + 26;
     }
 }
 
 def void main() {
-    let int answer = demo::get_answer();
-    std::print(answer);
-    
     let int meaning = demo::get_meaning();
     std::print(meaning);
-
-    let string question = demo::nested::get_question();
-    std::print(question);
-
-    std::print("foo");
-    std::print(2.5 + 2.0);
-    std::print(!true);
-
-    std::print('a');
-
-    for char in question {
-        std::print(char);
-    }
 
     let int i = 0;
     while i < 3 {
         std::print(i);
         i += 1;
-    }
-
-    for n in std::iter::range(0, 20, 5) {
-        std::print(n);
     }
 
     for n in std::iter::range(0, 20, 1) {

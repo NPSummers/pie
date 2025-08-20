@@ -151,6 +151,18 @@ pie_native_fn!(pie_or(a: GcRef, b: GcRef) -> GcBox {
     bool_to_box(a.is_some() || b.is_some())
 });
 
+pie_native_fn!(pie_bitand(a: GcRef, b: GcRef) -> Option<GcBox> {
+    Some((pie_to_int_helper(a)? & pie_to_int_helper(b)?).into())
+});
+
+pie_native_fn!(pie_bitor(a: GcRef, b: GcRef) -> Option<GcBox> {
+    Some((pie_to_int_helper(a)? | pie_to_int_helper(b)?).into())
+});
+
+pie_native_fn!(pie_bitxor(a: GcRef, b: GcRef) -> Option<GcBox> {
+    Some((pie_to_int_helper(a)? ^ pie_to_int_helper(b)?).into())
+});
+
 pie_native_fn!(pie_unary_add(val: GcRef) -> Option<GcBox> {
     use Value::*;
     Some(match &*val.try_value()? {
@@ -247,10 +259,19 @@ pie_native_fn!(pie_div_in_place(dst: GcRef, src: GcRef) pie "std::num::div_in_pl
     }
 });
 
+pub fn pie_to_int_helper(val: GcRef) -> Option<i64> {
+    use Value::*;
+    match &*val.try_value()? {
+        Str(s) => s.parse::<i64>().ok(),
+        &Int(i) => Some(i),
+        &Bool(b) => Some(b as i64),
+        _ => None,
+    }
+}
+
 // Helpers for numeric for-loops: extract and set ints without allocating
 pie_native_fn!(pie_int_to_i64(val: GcRef) -> i64 {
-    let Some(&Value::Int(i)) = val.try_value().as_deref() else { return 0 };
-    i
+    pie_to_int_helper(val).unwrap_or(0)
 });
 
 pie_native_fn!(pie_int_set_in_place(dst: GcRef, v: i64) {

@@ -184,6 +184,15 @@ pub enum Token<'s> {
     Or,
 
     // single-char tokens
+    #[token("&")]
+    /// &
+    BitAnd,
+    #[token("^")]
+    /// ^
+    BitXor,
+    #[token("|")]
+    /// |
+    BitOr,
     #[token("<")]
     /// <
     Lt,

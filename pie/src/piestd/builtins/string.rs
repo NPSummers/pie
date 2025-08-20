@@ -1,6 +1,6 @@
 use crate::{
-    piestd::builtins::pie_native_fn,
-    runtime::{GcBox, GcRef, Value},
+    piestd::builtins::{arithmetic::pie_to_int_helper, pie_native_fn},
+    runtime::{GcBox, GcRef},
 };
 
 pie_native_fn!(pie_string_new(ptr: *const u8, len: u64) -> GcBox {
@@ -29,11 +29,5 @@ pie_native_fn!(pie_to_string(val: GcRef) pie "std::to_string"[Any] => String -> 
 });
 
 pie_native_fn!(pie_to_int(val: GcRef) pie "std::to_int"[Any] => Int -> Option<GcBox>  {
-    use Value::*;
-    match &*val.try_value()? {
-        Str(s) => s.parse::<i64>().ok().map(GcBox::from),
-        &Int(_) => Some(val.new_box()),
-        &Bool(b) => Some(super::arithmetic::bool_to_box(b)),
-        _ => None
-    }
+    pie_to_int_helper(val).map(GcBox::from)
 });

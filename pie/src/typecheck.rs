@@ -269,6 +269,7 @@ fn check_stmt<'s>(
 fn binary_result_type(op: BinaryOp, lhs: &Type, rhs: &Type) -> Type {
     use BinaryOp::*;
     match op {
+        BitAnd | BitXor | BitOr => Type::Int,
         Add => {
             if *lhs == Type::String || *rhs == Type::String {
                 return Type::String;

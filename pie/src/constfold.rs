@@ -132,7 +132,7 @@ impl<'s> ConstVal<'s> {
             &ConstVal::Bool(b) => Expression::Bool(b),
             ConstVal::Str(s) => Expression::Str(s.clone()),
             ConstVal::List(l) => {
-                let l = l.into_iter().map(ConstVal::as_expr).collect();
+                let l = l.iter().map(ConstVal::as_expr).collect();
                 Expression::ListLiteral(l)
             }
         }
@@ -193,6 +193,15 @@ fn constfold_expr<'s>(outer: &mut Expression<'s>) -> Option<ConstVal<'s>> {
                     }};
                 }
                 match op {
+                    BinaryOp::BitOr => {
+                        break 'cf Some(ConstVal::Int(lhs.coerce_int()? | rhs.coerce_int()?))
+                    }
+                    BinaryOp::BitXor => {
+                        break 'cf Some(ConstVal::Int(lhs.coerce_int()? ^ rhs.coerce_int()?))
+                    }
+                    BinaryOp::BitAnd => {
+                        break 'cf Some(ConstVal::Int(lhs.coerce_int()? & rhs.coerce_int()?))
+                    }
                     BinaryOp::And => break 'cf Some(ConstVal::Bool(lhs.truthy() && rhs.truthy())),
                     BinaryOp::Or => break 'cf Some(ConstVal::Bool(lhs.truthy() || rhs.truthy())),
                     BinaryOp::Add => {
