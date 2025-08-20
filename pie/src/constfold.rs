@@ -169,12 +169,6 @@ fn constfold_expr<'s>(expr: &mut Expression<'s>) -> Option<ConstVal<'s>> {
             let rhs = constfold_expr(rhs)?;
             let sides = [&lhs, &rhs];
             macro_rules! basic_bop {
-                ($op:ident::$f:ident with_string) => {{
-                    basic_bop!($op::$f);
-                    if let [Some(lhs), Some(rhs)] = sides.map(ConstVal::coerce_string) {
-                        return Some(ConstVal::Str(::core::ops::$op::$f(lhs, rhs)));
-                    };
-                }};
                 ($op:ident::$f:ident) => {{
                     if let [Some(lhs), Some(rhs)] = sides.map(ConstVal::coerce_int) {
                         return Some(ConstVal::Int(::core::ops::$op::$f(lhs, rhs)));
@@ -185,7 +179,12 @@ fn constfold_expr<'s>(expr: &mut Expression<'s>) -> Option<ConstVal<'s>> {
                 }};
             }
             match op {
-                BinaryOp::Add => basic_bop!(Add::add with_string),
+                BinaryOp::Add => {
+                    basic_bop!(Add::add);
+                    if let [Some(lhs), Some(rhs)] = sides.map(ConstVal::coerce_string) {
+                        return Some(ConstVal::Str(::core::ops::Add::add(lhs, rhs)));
+                    };
+                }
                 BinaryOp::Sub => basic_bop!(Sub::sub),
                 BinaryOp::Mul => {
                     match &lhs {
