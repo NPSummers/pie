@@ -42,7 +42,7 @@ fn main() -> anyhow::Result<()> {
             opt_level = *level;
             continue;
         }
-        file_path = Some(arg);
+        file_path = file_path.or(Some(arg));
     }
     let Some(file_path) = file_path else {
         eprintln!("Usage: {} <file.pie>", env::args().next().unwrap());
