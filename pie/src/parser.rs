@@ -222,8 +222,8 @@ impl<'s> Parser<'s> {
         expr_prec: u16,
         mut lhs: Expression<'s>,
     ) -> Result<Expression<'s>, Diagnostic> {
-        while let Some(op) = self.peek() {
-            let op = match op {
+        fn token_to_bop(token: &Token) -> Option<BinaryOp> {
+            Some(match token {
                 Token::Plus => BinaryOp::Add,
                 Token::Minus => BinaryOp::Sub,
                 Token::Star => BinaryOp::Mul,
@@ -234,8 +234,12 @@ impl<'s> Parser<'s> {
                 Token::Lt => BinaryOp::Lt,
                 Token::GtEq => BinaryOp::GtEq,
                 Token::LtEq => BinaryOp::LtEq,
-                _ => break,
-            };
+                Token::Percent => BinaryOp::Rem,
+                _ => return None,
+            })
+        }
+        while let Some(op) = self.peek() {
+            let Some(op) = token_to_bop(op) else { break };
             let prec = op.precedence();
             if prec < expr_prec {
                 break;
@@ -243,19 +247,7 @@ impl<'s> Parser<'s> {
             self.advance();
             let mut rhs = self.parse_unary()?;
             while let Some(op) = self.peek() {
-                let op = match op {
-                    Token::Plus => BinaryOp::Add,
-                    Token::Minus => BinaryOp::Sub,
-                    Token::Star => BinaryOp::Mul,
-                    Token::Slash => BinaryOp::Div,
-                    Token::EqEq => BinaryOp::Eq,
-                    Token::Ne => BinaryOp::Ne,
-                    Token::Lt => BinaryOp::Lt,
-                    Token::Gt => BinaryOp::Gt,
-                    Token::GtEq => BinaryOp::GtEq,
-                    Token::LtEq => BinaryOp::LtEq,
-                    _ => break,
-                };
+                let Some(op) = token_to_bop(op) else { break };
                 let next_prec = op.precedence();
                 if next_prec <= prec {
                     break;

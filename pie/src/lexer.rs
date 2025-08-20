@@ -100,6 +100,7 @@ pub enum Token<'s> {
     BoolLit(bool),
     #[regex("\"", unescape_string)]
     StringLit(Cow<'s, str>),
+    // TODO: Allow _ as separator in numbers
     #[regex(r"0x[0-9a-fA-F]+", |lex| i64::from_str_radix(&lex.slice()[2..], 16).ok())]
     #[regex(r"0o[0-7]+", |lex| i64::from_str_radix(&lex.slice()[2..], 8).ok())]
     #[regex(r"0b[0-1]+", |lex| i64::from_str_radix(&lex.slice()[2..], 2).ok())]
@@ -170,6 +171,9 @@ pub enum Token<'s> {
     #[token(">")]
     /// >
     Gt,
+    #[token("%")]
+    /// %
+    Percent,
     #[token("+")]
     /// +
     Plus,
