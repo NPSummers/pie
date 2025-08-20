@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 mod ast;
 mod codegen;
+mod constfold;
 mod diagnostics;
 mod lexer;
 mod parser;
@@ -34,13 +35,14 @@ fn main() -> anyhow::Result<()> {
             std::process::exit(1);
         }
     };
-    let prog = match parser.parse() {
+    let mut prog = match parser.parse() {
         Ok(p) => p,
         Err(d) => {
             print_diagnostic(&file_path, &src, &d);
             std::process::exit(1);
         }
     };
+    constfold::constfold_program(&mut prog);
 
     // println!("{prog:#?}");
 

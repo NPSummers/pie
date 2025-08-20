@@ -1,5 +1,5 @@
 #![allow(improper_ctypes_definitions)]
-use std::cell::RefCell;
+use std::cell::{LazyCell, RefCell};
 use std::collections::HashMap;
 use std::fmt::{Debug, Display};
 // use std::mem::ManuallyDrop; // no longer needed
@@ -47,8 +47,6 @@ impl PartialOrd for Value {
             (Float(a), Float(b)) => a.partial_cmp(b),
             (Bool(a), Bool(b)) => a.partial_cmp(b),
             (Str(a), Str(b)) => a.partial_cmp(b),
-            (List(a), List(b)) => a.len().partial_cmp(&b.len()),
-            (Map(a), Map(b)) => a.len().partial_cmp(&b.len()),
             _ => None,
         }
     }
@@ -118,6 +116,51 @@ impl Display for Value {
 /// A non-none reference counted value
 pub struct GcBox(NonNull<RefCell<Value>>);
 
+impl GcBox {
+    pub fn new(val: Value) -> GcBox {
+        let rc = Rc::new(RefCell::new(val));
+        rc.into()
+    }
+
+    pub fn new_true() -> Self {
+        thread_local! {
+            static TRUE: LazyCell<Rc<RefCell<Value>>> = LazyCell::new(|| {
+                let rc = Rc::new(RefCell::new(Value::Bool(true)));
+
+                // Leak a read reference to disallow writing to this value
+                let read_ref = rc.borrow();
+                std::mem::forget(read_ref);
+
+                rc
+            });
+        };
+        let truthy = TRUE.with(|t| Rc::clone(t));
+        truthy.into()
+    }
+    pub fn new_false() -> Self {
+        thread_local! {
+            static FALSE: LazyCell<Rc<RefCell<Value>>> = LazyCell::new(|| {
+                let rc = Rc::new(RefCell::new(Value::Bool(false)));
+
+                // Leak a read reference to disallow writing to this value
+                let read_ref = rc.borrow();
+                std::mem::forget(read_ref);
+
+                rc
+            });
+        };
+        let falsy = FALSE.with(|t| Rc::clone(t));
+        falsy.into()
+    }
+}
+
+impl From<Rc<RefCell<Value>>> for GcBox {
+    fn from(value: Rc<RefCell<Value>>) -> Self {
+        let ptr = Rc::into_raw(value);
+        unsafe { GcBox(NonNull::new_unchecked(ptr.cast_mut())) }
+    }
+}
+
 impl Drop for GcBox {
     fn drop(&mut self) {
         unsafe { Rc::from_raw(self.0.as_ptr()) };
@@ -144,6 +187,11 @@ impl PartialEq for GcBox {
 }
 
 impl GcBox {
+    /// This will not decrement the strong reference count, so tracking the destruction of this
+    /// value is up to the caller
+    pub fn into_ref(self) -> GcRef<'static> {
+        GcRef(Some(unsafe { self.0.as_ref() }))
+    }
     pub fn as_ref<'s>(&'s self) -> GcRef<'s> {
         GcRef(Some(unsafe { self.0.as_ref() }))
     }
@@ -193,14 +241,24 @@ pub struct GcRef<'a>(pub Option<&'a RefCell<Value>>);
 
 impl GcRef<'_> {
     pub fn new_null() -> Self {
-        Self(None)
+        GcRef(None)
     }
 
     pub fn is_null(&self) -> bool {
         self.0.is_none()
     }
 
-    pub unsafe fn new_box_noincrement(&self) -> Rc<RefCell<Value>> {
+    pub fn inc_ref(&self) {
+        let Some(r) = self.0 else { return };
+        unsafe { Rc::increment_strong_count(core::ptr::from_ref(r)) };
+    }
+
+    pub unsafe fn dec_ref(&self) {
+        let Some(r) = self.0 else { return };
+        unsafe { Rc::decrement_strong_count(core::ptr::from_ref(r)) };
+    }
+
+    pub unsafe fn new_rc_noincrement(&self) -> Rc<RefCell<Value>> {
         let Some(rc) = self.0 else {
             panic!("Attempted to construct a GcBox from a None GcRef")
         };
@@ -210,13 +268,9 @@ impl GcRef<'_> {
 
     pub fn new_rc(&self) -> Rc<RefCell<Value>> {
         unsafe {
-            // Reconstruct an Rc from the raw pointer, clone it to create a new
-            // owning handle, then re-leak the original so the original raw
-            // token remains available for GcBox::drop.
-            let rc_original = self.new_box_noincrement();
-            let rc_clone = rc_original.clone();
-            let _ = Rc::into_raw(rc_original);
-            rc_clone
+            let rc = self.new_rc_noincrement();
+            self.inc_ref();
+            rc
         }
     }
 
@@ -226,26 +280,24 @@ impl GcRef<'_> {
 
     pub fn new_box(&self) -> GcBox {
         let rc = self.new_rc();
-        let ptr = Rc::into_raw(rc);
-        GcBox(unsafe { NonNull::new_unchecked(ptr.cast_mut()) })
+        rc.into()
+    }
+
+    pub fn try_value(&self) -> Option<std::cell::Ref<'_, Value>> {
+        self.0.map(|r| r.borrow())
     }
 
     pub fn value(&self) -> std::cell::Ref<'_, Value> {
-        self.0
+        self.try_value()
             .expect("Attempted to access the value of a null GcRef")
-            .borrow()
+    }
+
+    pub fn try_value_mut(&self) -> Option<std::cell::RefMut<'_, Value>> {
+        self.0.map(|r| r.borrow_mut())
     }
 
     pub fn value_mut(&self) -> std::cell::RefMut<'_, Value> {
-        self.0
+        self.try_value_mut()
             .expect("Attempted to access the value of a null GcRef")
-            .borrow_mut()
-    }
-}
-
-impl GcBox {
-    pub fn new(val: Value) -> GcBox {
-        let ptr = Rc::into_raw(Rc::new(RefCell::new(val)));
-        unsafe { GcBox(NonNull::new_unchecked(ptr.cast_mut())) }
     }
 }

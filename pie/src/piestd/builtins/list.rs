@@ -56,7 +56,7 @@ pie_native_fn!(pie_list_add_in_place(list: GcRef, idx: GcRef, delta: GcRef) pie 
     let &Value::Int(d) = &*delta.value() else {
         return;
     };
-    if i < 0 || (i as usize) >= v.len() {
+    if !(0..v.len() as i64).contains(&i) {
         return;
     }
     let cell = &mut v[i as usize];

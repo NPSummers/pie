@@ -1,6 +1,7 @@
 use crate::ast::*;
 use crate::piestd::builtins::Registry;
 use crate::typecheck::walk_items;
+use inkwell::basic_block::BasicBlock;
 use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::module::Module as LlvmModule;
@@ -8,6 +9,7 @@ use inkwell::types::BasicTypeEnum;
 use inkwell::values::{BasicValue, BasicValueEnum, FunctionValue, PointerValue};
 use inkwell::AddressSpace;
 use std::collections::HashMap;
+use std::ops::Deref;
 
 pub struct CodeGen<'ctx> {
     pub context: &'ctx Context,
@@ -15,11 +17,6 @@ pub struct CodeGen<'ctx> {
     pub builder: Builder<'ctx>,
     pub functions: HashMap<String, FunctionValue<'ctx>>,
     pub registry: &'ctx Registry<'ctx>,
-}
-
-enum GeneratedStatement<'ctx> {
-    Void,
-    Return(Option<BasicValueEnum<'ctx>>),
 }
 
 impl<'ctx> CodeGen<'ctx> {
@@ -47,41 +44,16 @@ impl<'ctx> CodeGen<'ctx> {
     fn build_inc_ref(&self, val: BasicValueEnum<'ctx>) {
         let f = self.module.get_function("pie_inc_ref").expect("inc_ref");
         let ptr = val.into_pointer_value();
-        let is_null = self
-            .builder
-            .build_is_null(ptr, "inc_ref_is_null")
-            .expect("is_null");
-        let current_block = self.builder.get_insert_block().expect("block");
-        let func = current_block.get_parent().expect("parent func");
-        let then_bb = self.context.append_basic_block(func, "inc_ref_then");
-        let cont_bb = self.context.append_basic_block(func, "inc_ref_cont");
-        self.builder
-            .build_conditional_branch(is_null, cont_bb, then_bb)
-            .unwrap();
-        self.builder.position_at_end(then_bb);
         let _ = self.builder.build_call(f, &[ptr.into()], "inc_ref_call");
-        self.builder.build_unconditional_branch(cont_bb).unwrap();
-        self.builder.position_at_end(cont_bb);
     }
 
     fn build_dec_ref(&self, val: BasicValueEnum<'ctx>) {
         let f = self.module.get_function("pie_dec_ref").expect("dec_ref");
         let ptr = val.into_pointer_value();
-        let is_null = self
+        let _ = self
             .builder
-            .build_is_null(ptr, "dec_ref_is_null")
-            .expect("is_null");
-        let current_block = self.builder.get_insert_block().expect("block");
-        let func = current_block.get_parent().expect("parent func");
-        let then_bb = self.context.append_basic_block(func, "dec_ref_then");
-        let cont_bb = self.context.append_basic_block(func, "dec_ref_cont");
-        self.builder
-            .build_conditional_branch(is_null, cont_bb, then_bb)
+            .build_call(f, &[ptr.into()], "dec_ref_call")
             .unwrap();
-        self.builder.position_at_end(then_bb);
-        let _ = self.builder.build_call(f, &[ptr.into()], "dec_ref_call");
-        self.builder.build_unconditional_branch(cont_bb).unwrap();
-        self.builder.position_at_end(cont_bb);
     }
 
     fn store_owned_ptr(
@@ -137,6 +109,9 @@ impl<'ctx> CodeGen<'ctx> {
         } else {
             return Err("PIE main function not found after compilation".into());
         }
+
+        #[cfg(debug_assertions)]
+        self.module.print_to_stderr();
 
         // Verify the module
         if let Err(errors) = self.module.verify() {
@@ -220,6 +195,12 @@ impl<'ctx> CodeGen<'ctx> {
         let entry = self.context.append_basic_block(fnv, "entry");
         self.builder.position_at_end(entry);
 
+        let retval = (!matches!(func.ret, TypeName::Void)).then(|| {
+            self.builder
+                .build_alloca(self.registry.ptr_type(), "pie_internal_retval")
+                .unwrap()
+        });
+
         let mut locals: HashMap<&str, PointerValue<'ctx>> = HashMap::new();
         for (idx, (_t, pname)) in func.params.iter().enumerate() {
             let alloca = self.builder.build_alloca(ptr_type, pname).expect("alloca");
@@ -233,26 +214,38 @@ impl<'ctx> CodeGen<'ctx> {
         }
         self.find_variables(&mut locals, func.body.iter());
 
-        let mut has_return = false;
+        let return_cleanup = self.context.append_basic_block(fnv, "return_cleanup");
+        self.builder.position_at_end(entry);
 
         for stmt in &func.body {
-            match self.codegen_stmt(&mut locals, func, fnv, stmt) {
-                GeneratedStatement::Void => (),
-                GeneratedStatement::Return(_) => {
-                    has_return = true;
-                    break;
-                }
-            }
+            self.codegen_stmt(&mut locals, func, fnv, return_cleanup, retval, stmt);
+        }
+        self.builder
+            .build_unconditional_branch(return_cleanup)
+            .unwrap();
+
+        let current_block = self.builder.get_insert_block().unwrap();
+        // Make return the final block
+        return_cleanup.move_after(current_block).unwrap();
+        self.builder.position_at_end(return_cleanup);
+
+        // Clean up locals
+        for (var, ptr) in locals {
+            let rc = self
+                .builder
+                .build_load(self.registry.ptr_type(), ptr, var)
+                .unwrap();
+            self.build_dec_ref(rc);
         }
 
-        if !has_return {
-            if matches!(func.ret, TypeName::Void) {
-                let _ = self.builder.build_return(None);
-            } else {
-                let null = ptr_type.const_null();
-                let null_val = null.as_basic_value_enum();
-                let _ = self.builder.build_return(Some(&null_val));
-            }
+        if let Some(retval) = retval {
+            let retval = self
+                .builder
+                .build_load(self.registry.ptr_type(), retval, "retval")
+                .unwrap();
+            self.builder.build_return(Some(&retval)).unwrap();
+        } else {
+            self.builder.build_return(None).unwrap();
         }
     }
 
@@ -261,8 +254,10 @@ impl<'ctx> CodeGen<'ctx> {
         locals: &mut HashMap<&'a str, PointerValue<'ctx>>,
         func: &Function,
         fnv: FunctionValue<'ctx>,
+        return_block: BasicBlock<'ctx>,
+        retval_ptr: Option<PointerValue<'ctx>>,
         stmt: &Statement<'a>,
-    ) -> GeneratedStatement<'ctx> {
+    ) {
         match stmt {
             Statement::For {
                 iterable,
@@ -410,7 +405,14 @@ impl<'ctx> CodeGen<'ctx> {
 
                             locals.insert(var, var_alloca);
                             for stmt in body {
-                                self.codegen_stmt(locals, func, fnv, stmt);
+                                self.codegen_stmt(
+                                    locals,
+                                    func,
+                                    fnv,
+                                    return_block,
+                                    retval_ptr,
+                                    stmt,
+                                );
                             }
                             // i += step
                             let i_next =
@@ -429,7 +431,7 @@ impl<'ctx> CodeGen<'ctx> {
                                 .build_load(self.registry.ptr_type(), var_alloca, "for_var_final")
                                 .expect("load for var at loop end");
                             self.build_dec_ref(for_var_final);
-                            return GeneratedStatement::Void;
+                            return;
                         }
                     }
                 }
@@ -480,7 +482,7 @@ impl<'ctx> CodeGen<'ctx> {
 
                 locals.insert(var, var_alloca);
                 for stmt in body {
-                    self.codegen_stmt(locals, func, fnv, stmt);
+                    self.codegen_stmt(locals, func, fnv, return_block, retval_ptr, stmt);
                 }
                 self.builder.build_unconditional_branch(loop_bb).unwrap();
                 locals.remove(var);
@@ -491,7 +493,6 @@ impl<'ctx> CodeGen<'ctx> {
                     .expect("load for var at loop end");
                 self.build_dec_ref(for_var_final);
                 self.build_dec_ref(iterable);
-                GeneratedStatement::Void
             }
             Statement::While { cond, body } => {
                 let while_bb = self.context.append_basic_block(fnv, "while_loop");
@@ -525,11 +526,10 @@ impl<'ctx> CodeGen<'ctx> {
                     .unwrap();
                 self.builder.position_at_end(while_then);
                 for stmt in body {
-                    self.codegen_stmt(locals, func, fnv, stmt);
+                    self.codegen_stmt(locals, func, fnv, return_block, retval_ptr, stmt);
                 }
                 self.builder.build_unconditional_branch(while_bb).unwrap();
                 self.builder.position_at_end(while_after);
-                GeneratedStatement::Void
             }
             Statement::If {
                 cond,
@@ -566,7 +566,7 @@ impl<'ctx> CodeGen<'ctx> {
                 // then
                 self.builder.position_at_end(then_bb);
                 for s in then_body {
-                    self.codegen_stmt(locals, func, fnv, s);
+                    self.codegen_stmt(locals, func, fnv, return_block, retval_ptr, s);
                 }
                 self.builder.build_unconditional_branch(cont_bb).unwrap();
 
@@ -574,14 +574,13 @@ impl<'ctx> CodeGen<'ctx> {
                 self.builder.position_at_end(else_bb);
                 if let Some(else_body) = else_body {
                     for s in else_body {
-                        self.codegen_stmt(locals, func, fnv, s);
+                        self.codegen_stmt(locals, func, fnv, return_block, retval_ptr, s);
                     }
                 }
                 self.builder.build_unconditional_branch(cont_bb).unwrap();
 
                 // cont
                 self.builder.position_at_end(cont_bb);
-                GeneratedStatement::Void
             }
             Statement::Let {
                 typ: _typ,
@@ -597,7 +596,6 @@ impl<'ctx> CodeGen<'ctx> {
                     self.store_owned_ptr(alloca, val, rhs_is_ident);
                     locals.insert(name, alloca);
                 }
-                GeneratedStatement::Void
             }
             Statement::Assignment { target, op, value } => {
                 // Load the current value of the target
@@ -663,31 +661,30 @@ impl<'ctx> CodeGen<'ctx> {
                         }
                     }
                 }
-                GeneratedStatement::Void
             }
             Statement::Expr(e) => {
                 if let Some(v) = self.codegen_expr(e, locals) {
                     // Discarding an owned temporary: release it
                     self.build_dec_ref(v);
                 }
-                GeneratedStatement::Void
             }
             Statement::Return(Some(e)) => {
                 let Some(v) = self.codegen_expr(e, locals) else {
                     panic!("Attempted to codegen a return with an expression that evaluates to nothing")
                 };
-                if matches!(func.ret, TypeName::Void) {
-                    self.builder.build_return(None).unwrap();
-                } else {
+                if !matches!(func.ret, TypeName::Void) {
                     // Return transfers ownership to the caller; bump refcount
                     self.build_inc_ref(v);
-                    self.builder.build_return(Some(&v)).unwrap();
+                    self.builder.build_store(retval_ptr.unwrap(), v).unwrap();
                 }
-                GeneratedStatement::Return(Some(v))
+                self.builder
+                    .build_unconditional_branch(return_block)
+                    .unwrap();
             }
             Statement::Return(None) => {
-                let _ = self.builder.build_return(None);
-                GeneratedStatement::Return(None)
+                self.builder
+                    .build_unconditional_branch(return_block)
+                    .unwrap();
             }
         }
     }
@@ -771,209 +768,61 @@ impl<'ctx> CodeGen<'ctx> {
                 Some(loaded)
             }
             Expression::Binary(lhs, op, rhs) => {
-                // Constant-fold simple numeric ops and comparisons on literals
-                if let (Expression::Int(li), Expression::Int(ri)) = (&**lhs, &**rhs) {
-                    let i64_t = self.context.i64_type();
-                    match op {
-                        BinaryOp::Add => {
-                            let f = self.module.get_function("pie_int_new").unwrap();
-                            let cv = i64_t.const_int((*li as i128 + *ri as i128) as u64, true);
-                            let call = self
-                                .builder
-                                .build_call(f, &[cv.into()], "cf_i_add")
-                                .unwrap();
-                            return call.try_as_basic_value().left();
-                        }
-                        BinaryOp::Sub => {
-                            let f = self.module.get_function("pie_int_new").unwrap();
-                            let cv = i64_t.const_int((*li as i128 - *ri as i128) as u64, true);
-                            let call = self
-                                .builder
-                                .build_call(f, &[cv.into()], "cf_i_sub")
-                                .unwrap();
-                            return call.try_as_basic_value().left();
-                        }
-                        BinaryOp::Mul => {
-                            let f = self.module.get_function("pie_int_new").unwrap();
-                            let cv = i64_t.const_int((*li as i128 * *ri as i128) as u64, true);
-                            let call = self
-                                .builder
-                                .build_call(f, &[cv.into()], "cf_i_mul")
-                                .unwrap();
-                            return call.try_as_basic_value().left();
-                        }
-                        BinaryOp::Div => {
-                            if *ri != 0 {
-                                let f = self.module.get_function("pie_int_new").unwrap();
-                                let cv = i64_t.const_int((li / ri) as u64, true);
-                                let call = self
-                                    .builder
-                                    .build_call(f, &[cv.into()], "cf_i_div")
-                                    .unwrap();
-                                return call.try_as_basic_value().left();
-                            }
-                        }
-                        BinaryOp::Rem => {
-                            if *ri != 0 {
-                                let f = self.module.get_function("pie_int_new").unwrap();
-                                let cv = i64_t.const_int((li % ri) as u64, true);
-                                let call = self
-                                    .builder
-                                    .build_call(f, &[cv.into()], "cf_i_rem")
-                                    .unwrap();
-                                return call.try_as_basic_value().left();
-                            }
-                        }
-                        BinaryOp::Eq => {
-                            let f = self.module.get_function("pie_bool_new").unwrap();
-                            let cv = self.context.i8_type().const_int((li == ri) as u64, false);
-                            let call = self.builder.build_call(f, &[cv.into()], "cf_i_eq").unwrap();
-                            return call.try_as_basic_value().left();
-                        }
-                        BinaryOp::Ne => {
-                            let f = self.module.get_function("pie_bool_new").unwrap();
-                            let cv = self.context.i8_type().const_int((li != ri) as u64, false);
-                            let call = self.builder.build_call(f, &[cv.into()], "cf_i_ne").unwrap();
-                            return call.try_as_basic_value().left();
-                        }
-                        BinaryOp::Lt => {
-                            let f = self.module.get_function("pie_bool_new").unwrap();
-                            let cv = self.context.i8_type().const_int((li < ri) as u64, false);
-                            let call = self.builder.build_call(f, &[cv.into()], "cf_i_lt").unwrap();
-                            return call.try_as_basic_value().left();
-                        }
-                        BinaryOp::Gt => {
-                            let f = self.module.get_function("pie_bool_new").unwrap();
-                            let cv = self.context.i8_type().const_int((li > ri) as u64, false);
-                            let call = self.builder.build_call(f, &[cv.into()], "cf_i_gt").unwrap();
-                            return call.try_as_basic_value().left();
-                        }
-                        BinaryOp::LtEq => {
-                            let f = self.module.get_function("pie_bool_new").unwrap();
-                            let cv = self.context.i8_type().const_int((li <= ri) as u64, false);
-                            let call = self
-                                .builder
-                                .build_call(f, &[cv.into()], "cf_i_lte")
-                                .unwrap();
-                            return call.try_as_basic_value().left();
-                        }
-                        BinaryOp::GtEq => {
-                            let f = self.module.get_function("pie_bool_new").unwrap();
-                            let cv = self.context.i8_type().const_int((li >= ri) as u64, false);
-                            let call = self
-                                .builder
-                                .build_call(f, &[cv.into()], "cf_i_gte")
-                                .unwrap();
-                            return call.try_as_basic_value().left();
-                        }
-                    }
-                }
-                if let (Expression::Float(lf), Expression::Float(rf)) = (&**lhs, &**rhs) {
-                    let f64_t = self.context.f64_type();
-                    match op {
-                        BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div => {
-                            let f = self.module.get_function("pie_float_new").unwrap();
-                            let val = match op {
-                                BinaryOp::Add => lf + rf,
-                                BinaryOp::Sub => lf - rf,
-                                BinaryOp::Mul => lf * rf,
-                                BinaryOp::Div => lf / rf,
-                                _ => unreachable!(),
-                            };
-                            let cv = f64_t.const_float(val);
-                            let call = self
-                                .builder
-                                .build_call(f, &[cv.into()], "cf_f_bin")
-                                .unwrap();
-                            return call.try_as_basic_value().left();
-                        }
-                        BinaryOp::Eq
-                        | BinaryOp::Ne
-                        | BinaryOp::Lt
-                        | BinaryOp::Gt
-                        | BinaryOp::LtEq
-                        | BinaryOp::GtEq => {
-                            let f = self.module.get_function("pie_bool_new").unwrap();
-                            let v = match op {
-                                BinaryOp::Eq => lf == rf,
-                                BinaryOp::Ne => lf != rf,
-                                BinaryOp::Lt => lf < rf,
-                                BinaryOp::Gt => lf > rf,
-                                BinaryOp::LtEq => lf <= rf,
-                                BinaryOp::GtEq => lf >= rf,
-                                _ => unreachable!(),
-                            };
-                            let cv = self.context.i8_type().const_int(v as u64, false);
-                            let call = self
-                                .builder
-                                .build_call(f, &[cv.into()], "cf_f_cmp")
-                                .unwrap();
-                            return call.try_as_basic_value().left();
-                        }
-                        BinaryOp::Rem => { /* fallthrough to generic path */ }
-                    }
-                }
-
                 // evaluate LHS first
                 let lhs_is_ident = matches!(**lhs, Expression::Ident(_));
                 let left_val = self.codegen_expr(lhs, locals)?;
 
                 // Strength-reduce small constant modulus and/or avoid runtime call
-                if matches!(op, BinaryOp::Rem) {
-                    if let Expression::Int(m) = **rhs {
-                        if m > 0 {
-                            let i64_t = self.context.i64_type();
-                            let fn_int_to_i64 = self.module.get_function("pie_int_to_i64").unwrap();
-                            let fn_int_new = self.module.get_function("pie_int_new").unwrap();
-                            let i_left = self
-                                .builder
-                                .build_call(fn_int_to_i64, &[left_val.into()], "rem_lhs_i64")
-                                .expect("call");
-                            let i_left =
-                                i_left.try_as_basic_value().left().unwrap().into_int_value();
-                            let m_const = i64_t.const_int(m as u64, true);
+                if let (BinaryOp::Rem, &Expression::Int(m @ 1..)) = (op, rhs.deref()) {
+                    let i64_t = self.context.i64_type();
+                    let fn_int_to_i64 = self.module.get_function("pie_int_to_i64").unwrap();
+                    let fn_int_new = self.module.get_function("pie_int_new").unwrap();
+                    let i_left = self
+                        .builder
+                        .build_call(fn_int_to_i64, &[left_val.into()], "rem_lhs_i64")
+                        .expect("call");
+                    let i_left = i_left.try_as_basic_value().left().unwrap().into_int_value();
+                    let m_const = i64_t.const_int(m as u64, true);
 
-                            // If modulus is power of two, use (i & (m-1)) for non-negative i; else srem
-                            let result_i = if (m & (m - 1)) == 0 {
-                                let is_neg = self
-                                    .builder
-                                    .build_int_compare(
-                                        inkwell::IntPredicate::SLT,
-                                        i_left,
-                                        i64_t.const_zero(),
-                                        "is_neg",
-                                    )
-                                    .unwrap();
-                                let and_mask = i64_t.const_int((m as u64) - 1, false);
-                                let masked = self
-                                    .builder
-                                    .build_and(i_left, and_mask, "and_mask")
-                                    .unwrap();
-                                let srem = self
-                                    .builder
-                                    .build_int_signed_rem(i_left, m_const, "srem")
-                                    .unwrap();
-                                // select(is_neg, srem, masked)
-                                self.builder
-                                    .build_select(is_neg, srem, masked, "rem_sel")
-                                    .unwrap()
-                                    .into_int_value()
-                            } else {
-                                self.builder
-                                    .build_int_signed_rem(i_left, m_const, "srem")
-                                    .unwrap()
-                            };
+                    // If modulus is power of two, use (i & (m-1)) for non-negative i; else srem
+                    let result_i = if (m & (m - 1)) == 0 {
+                        let is_neg = self
+                            .builder
+                            .build_int_compare(
+                                inkwell::IntPredicate::SLT,
+                                i_left,
+                                i64_t.const_zero(),
+                                "is_neg",
+                            )
+                            .unwrap();
+                        let and_mask = i64_t.const_int((m as u64) - 1, false);
+                        let masked = self
+                            .builder
+                            .build_and(i_left, and_mask, "and_mask")
+                            .unwrap();
+                        let srem = self
+                            .builder
+                            .build_int_signed_rem(i_left, m_const, "srem")
+                            .unwrap();
+                        // select(is_neg, srem, masked)
+                        self.builder
+                            .build_select(is_neg, srem, masked, "rem_sel")
+                            .unwrap()
+                            .into_int_value()
+                    } else {
+                        self.builder
+                            .build_int_signed_rem(i_left, m_const, "srem")
+                            .unwrap()
+                    };
 
-                            let boxed = self
-                                .builder
-                                .build_call(fn_int_new, &[result_i.into()], "rem_box")
-                                .expect("call");
-                            if !lhs_is_ident {
-                                self.build_dec_ref(left_val);
-                            }
-                            return boxed.try_as_basic_value().left();
-                        }
+                    let boxed = self
+                        .builder
+                        .build_call(fn_int_new, &[result_i.into()], "rem_box")
+                        .expect("call");
+                    if !lhs_is_ident {
+                        self.build_dec_ref(left_val);
                     }
+                    return boxed.try_as_basic_value().left();
                 }
 
                 // Generic binary op path

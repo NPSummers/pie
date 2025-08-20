@@ -17,15 +17,22 @@ pie_native_fn!(pie_bool_new(v: bool) -> GcBox {
     v.into()
 });
 
-// Returns null if the provided value is not truthy, a valid GcRef(the one provided to it) otherwise
-pie_native_fn!(pie_internal_truthy(a: GcRef) -> GcRef {
-    use Value::*;
-    if a.is_null() {
-        return GcRef::new_null();
+fn bool_to_box(b: bool) -> GcBox {
+    // Use statically allocated true/false
+    if b {
+        GcBox::new_true()
+    } else {
+        GcBox::new_false()
     }
-    let val = a.value();
-    let bool_to_null = |b| if b {a.clone()} else {GcRef::new_null()};
-    bool_to_null(match &*val {
+}
+
+// Returns null if the provided value is not truthy, a valid GcRef(the one provided to it) otherwise
+pie_native_fn!(pie_internal_truthy(a: GcRef) -> GcBox {
+    use Value::*;
+    let Some(val) = a.try_value() else {
+        return bool_to_box(false);
+    };
+    bool_to_box(match &*val {
         &Bool(b) => b,
         &Int(i) => i != 0,
         &Float(f) => f.is_finite() && f != 0.0,
@@ -36,28 +43,32 @@ pie_native_fn!(pie_internal_truthy(a: GcRef) -> GcRef {
     })
 });
 
+// NOTE: Equality functions return:
+// Value::Bool(true) if true
+// None/null if false
+// To turn this into a valid GcBox true/false, use pie_internal_truthy
 pie_native_fn!(pie_eq(a: GcRef, b: GcRef) -> GcBox {
-    (*a.value() == *b.value()).into()
+    bool_to_box(a.try_value().as_deref() == b.try_value().as_deref())
 });
 
 pie_native_fn!(pie_ne(a: GcRef, b: GcRef) -> GcBox {
-    (*a.value() != *b.value()).into()
+    bool_to_box(a.try_value().as_deref() != b.try_value().as_deref())
 });
 
 pie_native_fn!(pie_lt(a: GcRef, b: GcRef) -> GcBox {
-    (*a.value() < *b.value()).into()
+    bool_to_box(a.try_value().as_deref() < b.try_value().as_deref())
 });
 
 pie_native_fn!(pie_gt(a: GcRef, b: GcRef) -> GcBox {
-    (*a.value() > *b.value()).into()
+    bool_to_box(a.try_value().as_deref() > b.try_value().as_deref())
 });
 
 pie_native_fn!(pie_gteq(a: GcRef, b: GcRef) -> GcBox {
-    (*a.value() >= *b.value()).into()
+    bool_to_box(a.try_value().as_deref() >= b.try_value().as_deref())
 });
 
 pie_native_fn!(pie_lteq(a: GcRef, b: GcRef) -> GcBox {
-    (*a.value() <= *b.value()).into()
+    bool_to_box(a.try_value().as_deref() <= b.try_value().as_deref())
 });
 
 pie_native_fn!(pie_add(a: GcRef, b: GcRef) -> Option<GcBox> {
@@ -91,6 +102,9 @@ pie_native_fn!(pie_mul(a: GcRef, b: GcRef) -> Option<GcBox> {
         (Float(a), Float(b)) => (a * b).into(),
         (&Int(a), Float(b)) => (a as f64 * b).into(),
         (Float(a), &Int(b)) => (a * b as f64).into(),
+        (Str(str), &Int(factor)) => {
+            str.repeat(factor.try_into().ok()?).into()
+        }
         (List(list), &Int(factor)) => {
             let factor: usize = factor.try_into().unwrap();
             let mut out = Vec::with_capacity(list.len() * factor);
@@ -172,13 +186,13 @@ pie_native_fn!(pie_add_in_place(dst: GcRef, src: GcRef) pie "std::num::add_in_pl
             *a += b;
         }
         (Float(a), &Float(b)) => {*a += b},
-        (Float(a), &Int(b)) => {*a += b as f64;}
-        (lhs @ &mut Int(a), Float(b)) => { *lhs = Float(a as f64 + b) ;},
+        (Float(a), &Int(b)) => {*a += b as f64}
+        (lhs @ &mut Int(a), Float(b)) => { *lhs = Float(a as f64 + b) },
         (Str(a), other) => {
             use std::fmt::Write;
             write!(a, "{other}").unwrap();
         },
-        (other, Str(b)) => {*other = Str(format!("{other}{b}"));},
+        (other, Str(b)) => {*other = Str(format!("{other}{b}"))},
         _ => return,
     };
 });
@@ -187,11 +201,11 @@ pie_native_fn!(pie_sub_in_place(dst: GcRef, src: GcRef) pie "std::num::sub_in_pl
     use Value::*;
     let mut d = dst.value_mut();
     let sref = src.value();
-    *d = match (&*d, &*sref) {
-        (Int(a), Int(b)) => Int(a - b),
-        (Float(a), Float(b)) => Float(a - b),
-        (Float(a), Int(b)) => Float(a - *b as f64),
-        (Int(a), Float(b)) => Float(*a as f64 - b),
+    match (&mut *d, &*sref) {
+        (Int(a), Int(b)) => {*a -= b},
+        (Float(a), Float(b)) => {*a -= b},
+        (Float(a), Int(b)) => {*a -= *b as f64},
+        (lhs @ &mut Int(a), Float(b)) => { *lhs = Float(a as f64 - b) },
         _ => return,
     }
 });
@@ -225,11 +239,12 @@ pie_native_fn!(pie_div_in_place(dst: GcRef, src: GcRef) pie "std::num::div_in_pl
 
 // Helpers for numeric for-loops: extract and set ints without allocating
 pie_native_fn!(pie_int_to_i64(val: GcRef) -> i64 {
-    let &Value::Int(i) = &*val.value() else { return 0 };
+    let Some(&Value::Int(i)) = val.try_value().as_deref() else { return 0 };
     i
 });
 
 pie_native_fn!(pie_int_set_in_place(dst: GcRef, v: i64) {
-    let Value::Int(ref mut i) = &mut *dst.value_mut() else { return };
+    let mut val = dst.try_value_mut();
+    let Some(Value::Int(i)) = val.as_deref_mut() else { return };
     *i = v;
 });
