@@ -1,5 +1,5 @@
 use crate::{
-    piestd::builtins::{pie_native_fn, Registry},
+    piestd::builtins::pie_native_fn,
     runtime::{GcBox, GcRef, Value},
 };
 
@@ -15,16 +15,16 @@ pie_native_fn!(pie_list_len(list: GcRef) pie "std::list::len"[List] => Int -> i6
 });
 
 pie_native_fn!(pie_list_get(list: GcRef, idx: GcRef) pie "std::list::get"[List, Int] => Any -> Option<GcBox> {
-    let Value::List(v) = &*list.value() else {
+    let Value::List(v) = &*list.try_value()? else {
         return None;
     };
-    let &Value::Int(idx) = &*idx.value() else {
+    let &Value::Int(idx) = &*idx.try_value()? else {
         return None;
     };
     if idx.is_negative() {
         return None;
     }
-    Some(v[idx as usize].clone())
+    Some(v.get::<usize>(idx.try_into().ok()?)?.clone())
 });
 
 pie_native_fn!(pie_list_set(list: GcRef, idx: GcRef, val: GcRef) pie "std::list::set"[List, Int, Any] {
@@ -56,7 +56,7 @@ pie_native_fn!(pie_list_add_in_place(list: GcRef, idx: GcRef, delta: GcRef) pie 
     let &Value::Int(d) = &*delta.value() else {
         return;
     };
-    if i < 0 || (i as usize) >= v.len() {
+    if !(0..v.len() as i64).contains(&i) {
         return;
     }
     let cell = &mut v[i as usize];

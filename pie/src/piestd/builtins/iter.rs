@@ -1,22 +1,23 @@
 use std::{
+    borrow::Cow,
     cell::{Ref, RefCell},
     collections::HashMap,
     rc::Rc,
 };
 
 use crate::{
-    piestd::builtins::{pie_native_fn, Registry},
+    piestd::builtins::pie_native_fn,
     runtime::{DebugIter, GcBox, GcRef, Value},
 };
 
-pie_native_fn!(pie_iter_new(iterable: GcRef) pie "std::iter::new"[Any] => Any -> Option<GcBox> {
-    let val = iterable.new_rc();
+pie_native_fn!(pie_iter_new(target: GcRef) pie "std::iter::new"[Any] => Any -> Option<GcBox> {
+    let val = target.new_rc();
     use Value::*;
     let iter: Box<dyn DebugIter> = match &*val.borrow() {
-        Iterator(b) => b.clone_as_debug_iter(),
-        Str(_) => Box::new(StringIter::new(val.clone()).unwrap()),
-        Map(_) => Box::new(MapIter::new(val.clone()).unwrap()),
-        List(_) => Box::new(ListIter::new(val.clone()).unwrap()),
+        Iterator(_) => return Some(target.new_box()),
+        Str(_) => Box::new(StringIter::new(target.new_rc()).unwrap()),
+        Map(_) => Box::new(MapIter::new(target.new_rc()).unwrap()),
+        List(_) => Box::new(ListIter::new(target.new_rc()).unwrap()),
         // TODO: Should these types be iterable?
         Bool(_) | Float(_) | Int(_) => return None,
     };
@@ -97,13 +98,13 @@ impl<Inner> BorrowWrapper<Inner> {
 
 #[derive(Debug, Clone)]
 struct MapIter {
-    borrow: BorrowWrapper<HashMap<String, GcBox>>,
-    iter: std::collections::hash_map::Iter<'static, String, GcBox>,
+    borrow: BorrowWrapper<HashMap<Cow<'static, str>, GcBox>>,
+    iter: std::collections::hash_map::Iter<'static, Cow<'static, str>, GcBox>,
 }
 
 impl MapIter {
     pub fn new(rc: Rc<RefCell<Value>>) -> Option<Self> {
-        fn get_map(v: &Value) -> &HashMap<String, GcBox> {
+        fn get_map(v: &Value) -> &HashMap<Cow<'static, str>, GcBox> {
             let Value::Map(m) = v else { unreachable!() };
             m
         }
@@ -112,8 +113,10 @@ impl MapIter {
         let Value::Map(_) = &*val else {
             return None;
         };
-        let borrow =
-            BorrowWrapper::new(rc.clone(), get_map as fn(&Value) -> &HashMap<String, GcBox>);
+        let borrow = BorrowWrapper::new(
+            rc.clone(),
+            get_map as fn(&Value) -> &HashMap<Cow<'static, str>, GcBox>,
+        );
         // SAFETY: This reference will only exist while the Ref/Rc it references is valid, by being
         // stored in the same struct
         let r = unsafe { borrow.get_static_ref() };
@@ -168,13 +171,13 @@ impl Iterator for ListIter {
 
 #[derive(Debug, Clone)]
 struct StringIter {
-    borrow: BorrowWrapper<String>,
+    borrow: BorrowWrapper<Cow<'static, str>>,
     iter: std::str::Chars<'static>,
 }
 
 impl StringIter {
     pub fn new(rc: Rc<RefCell<Value>>) -> Option<Self> {
-        fn get_string(v: &Value) -> &String {
+        fn get_string(v: &Value) -> &Cow<'static, str> {
             let Value::Str(v) = &v else { unreachable!() };
             v
         }
@@ -183,10 +186,10 @@ impl StringIter {
         let Value::Str(_) = &*val else {
             return None;
         };
-        let borrow = BorrowWrapper::new(rc.clone(), get_string as fn(&Value) -> &String);
+        let borrow = BorrowWrapper::new(rc.clone(), get_string as fn(&Value) -> &Cow<'static, str>);
         // SAFETY: This reference will only exist while the Ref/Rc it references is valid, by being
         // stored in the same struct
-        let r = unsafe { borrow.get_static_ref() };
+        let r: &'static Cow<'static, str> = unsafe { borrow.get_static_ref() };
         let iter = r.chars();
         Some(StringIter { borrow, iter })
     }

@@ -1,9 +1,19 @@
 def void main() {
-    let int u = 7;
-    let int r = 11;
-    let list a = [0] * 10000;
-    for i in std::iter::range(0, 1000, 1) {
-        for j in std::iter::range(0, 100000, 1) {
+    let list args = std::args();
+    let string arg = std::list::get(args, 3);
+    if std::is_null(arg) {
+        std::print_err("No command line argument provided");
+        return;
+    }
+    let int u = std::to_int(arg);
+    if std::is_null(u) {
+        std::print_err("Could not parse " + arg + " as integer");
+        return;
+    }
+    let int r = std::rand::int_range(0, 10000 - 1);
+    let list a = [0] * 10_000;
+    for i in std::iter::range(0, 10_000, 1) {
+        for j in std::iter::range(0, 100_000, 1) {
             std::list::add_in_place(a, i, j % u);
         }
         std::list::add_in_place(a, i, r);

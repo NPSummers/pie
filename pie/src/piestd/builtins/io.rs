@@ -1,10 +1,27 @@
+use std::io::stdin;
+
 use crate::{
-    piestd::builtins::{pie_native_fn, Registry},
+    piestd::builtins::pie_native_fn,
     runtime::{GcBox, GcRef, Value},
 };
 
 pie_native_fn!(pie_print(val: GcRef) pie "std::print"[Any] {
     println!("{}", val.value())
+});
+
+pie_native_fn!(pie_print_err(val: GcRef) pie "std::print_err"[Any] {
+    eprintln!("{}", val.value())
+});
+
+pie_native_fn!(pie_get_args() pie "std::args"[] => List -> GcBox {
+    let args = std::env::args().map(|arg| arg.into()).collect();
+    GcBox::new(Value::List(args))
+});
+
+pie_native_fn!(pie_input_get_int() pie "std::input::get_int"[] => Int -> Option<GcBox> {
+    let mut buf = String::new();
+    stdin().read_line(&mut buf).ok()?;
+    Some(GcBox::new(Value::Int(buf.trim().parse().ok()?)))
 });
 
 pie_native_fn!(pie_http_get(url_val: GcRef, headers: GcRef) pie "std::http_get"[String, Map] => String -> GcBox {
@@ -16,10 +33,10 @@ pie_native_fn!(pie_http_get(url_val: GcRef, headers: GcRef) pie "std::http_get"[
     };
 
     // build request and apply headers if provided
-    let mut req = ureq::get(url);
+    let mut req = ureq::get(url.as_ref());
 
     for (k, v) in headers {
-        req = req.header(k, &v.as_ref().value().to_string());
+        req = req.header(k.as_ref(), &v.as_ref().value().to_string());
     }
 
     match req.call() {

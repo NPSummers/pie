@@ -116,15 +116,25 @@ pub enum BinaryOp {
     Ne,
     Lt,
     Gt,
+    And,
+    Or,
+    BitAnd,
+    BitOr,
+    BitXor,
 }
 
 impl BinaryOp {
     pub fn precedence(&self) -> u16 {
         use BinaryOp::*;
         match self {
-            Lt | LtEq | Gt | GtEq | Ne | Eq => 0,
-            Add | Sub => 10,
-            Mul | Div | Rem => 20,
+            Or => 8,
+            And => 10,
+            BitOr => 12,
+            BitXor => 14,
+            BitAnd => 16,
+            Lt | LtEq | Gt | GtEq | Ne | Eq => 20,
+            Add | Sub => 30,
+            Mul | Div | Rem => 40,
         }
     }
 }

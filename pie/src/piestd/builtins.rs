@@ -11,6 +11,7 @@ mod io;
 mod iter;
 mod list;
 mod map;
+mod rand;
 mod rc;
 mod string;
 
@@ -43,7 +44,7 @@ macro_rules! pie_native_fn {
     ::paste::paste! {
         #[::linkme::distributed_slice(crate::piestd::builtins::REGISTRATION_FUNCTIONS)]
         #[allow(non_upper_case_globals)]
-        static [<$name _register_distslice>]: fn(&mut Registry<'_>) = [<$name _register>];
+        static [<$name _register_distslice>]: fn(&mut crate::piestd::builtins::Registry<'_>) = [<$name _register>];
 
         fn [<$name _register>]<'ctx>(reg: &mut crate::piestd::builtins::Registry<'ctx>) {
             #[allow(unused_imports)]
@@ -94,7 +95,7 @@ macro_rules! pie_native_fn {
     ::paste::paste! {
         #[::linkme::distributed_slice(crate::piestd::builtins::REGISTRATION_FUNCTIONS)]
         #[allow(non_upper_case_globals)]
-        static [<$name _register_distslice>]: fn(&mut Registry<'_>) = [<$name _register>];
+        static [<$name _register_distslice>]: fn(&mut crate::piestd::builtins::Registry<'_>) = [<$name _register>];
 
         fn [<$name _register>]<'ctx>(reg: &mut crate::piestd::builtins::Registry<'ctx>) {
             #[allow(unused_imports)]
