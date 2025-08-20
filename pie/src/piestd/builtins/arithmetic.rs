@@ -167,15 +167,20 @@ pie_native_fn!(pie_add_in_place(dst: GcRef, src: GcRef) pie "std::num::add_in_pl
     use Value::*;
     let mut d = dst.value_mut();
     let sref = src.value();
-    *d = match (&*d, &*sref) {
-        (Int(a), Int(b)) => Int(a + b),
-        (Float(a), Float(b)) => Float(a + b),
-        (Float(a), Int(b)) => Float(a + *b as f64),
-        (Int(a), Float(b)) => Float(*a as f64 + b),
-        (Str(a), other) => Str(format!("{a}{other}")),
-        (other, Str(b)) => Str(format!("{other}{b}")),
+    match (&mut *d, &*sref) {
+        (Int(a), &Int(b)) => {
+            *a += b;
+        }
+        (Float(a), &Float(b)) => {*a += b},
+        (Float(a), &Int(b)) => {*a += b as f64;}
+        (lhs @ &mut Int(a), Float(b)) => { *lhs = Float(a as f64 + b) ;},
+        (Str(a), other) => {
+            use std::fmt::Write;
+            write!(a, "{other}").unwrap();
+        },
+        (other, Str(b)) => {*other = Str(format!("{other}{b}"));},
         _ => return,
-    }
+    };
 });
 
 pie_native_fn!(pie_sub_in_place(dst: GcRef, src: GcRef) pie "std::num::sub_in_place"[Any, Any] {
