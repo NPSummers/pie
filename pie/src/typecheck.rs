@@ -290,7 +290,7 @@ fn binary_result_type(op: BinaryOp, lhs: &Type, rhs: &Type) -> Type {
             }
             Type::Any
         }
-        Lt | Gt | Eq | Ne | LtEq | GtEq => Type::Bool,
+        Lt | Gt | Eq | Ne | LtEq | GtEq | And | Or => Type::Bool,
     }
 }
 

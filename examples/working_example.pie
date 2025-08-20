@@ -47,4 +47,16 @@ def void main() {
     for n in std::iter::range(0, 20, 5) {
         std::print(n);
     }
+
+    for n in std::iter::range(0, 20, 1) {
+        if n % 5 == 0 && n % 3 == 0 {
+            std::print("FizzBuzz");
+        } elif n % 3 == 0 {
+            std::print("Fizz");
+        } elif n % 5 == 0 {
+            std::print("Buzz");
+        } else {
+            std::print(n);
+        }
+    }
 }

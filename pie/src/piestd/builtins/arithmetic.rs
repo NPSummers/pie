@@ -71,7 +71,7 @@ pie_native_fn!(pie_lteq(a: GcRef, b: GcRef) -> GcBox {
 
 pie_native_fn!(pie_add(a: GcRef, b: GcRef) -> Option<GcBox> {
     use Value::*;
-    Some(match (&*a.value(), &*b.value()) {
+    Some(match (&*a.try_value()?, &*b.try_value()?) {
         (Int(a), Int(b)) => (a + b).into(),
         (Str(a), b) => format!("{a}{b}").into(),
         (a, Str(b)) => format!("{a}{b}").into(),
@@ -84,7 +84,7 @@ pie_native_fn!(pie_add(a: GcRef, b: GcRef) -> Option<GcBox> {
 
 pie_native_fn!(pie_sub(a: GcRef, b: GcRef) -> Option<GcBox> {
     use Value::*;
-    Some(match (&*a.value(), &*b.value()) {
+    Some(match (&*a.try_value()?, &*b.try_value()?) {
         (Int(a), Int(b)) => (a - b).into(),
         (Float(a), Float(b)) => (a - b).into(),
         (&Int(a), Float(b)) => (a as f64 - b).into(),
@@ -95,7 +95,7 @@ pie_native_fn!(pie_sub(a: GcRef, b: GcRef) -> Option<GcBox> {
 
 pie_native_fn!(pie_mul(a: GcRef, b: GcRef) -> Option<GcBox> {
     use Value::*;
-    Some(match (&*a.value(), &*b.value()) {
+    Some(match (&*a.try_value()?, &*b.try_value()?) {
         (Int(a), Int(b)) => (a * b).into(),
         (Float(a), Float(b)) => (a * b).into(),
         (&Int(a), Float(b)) => (a as f64 * b).into(),
@@ -117,7 +117,7 @@ pie_native_fn!(pie_mul(a: GcRef, b: GcRef) -> Option<GcBox> {
 
 pie_native_fn!(pie_div(a: GcRef, b: GcRef) -> Option<GcBox> {
     use Value::*;
-    Some(match (&*a.value(), &*b.value()) {
+    Some(match (&*a.try_value()?, &*b.try_value()?) {
         (_, Int(0)) => return None,
         (Int(a), Int(b)) => (a / b).into(),
         (Float(a), Float(b)) => (a / b).into(),
@@ -129,7 +129,7 @@ pie_native_fn!(pie_div(a: GcRef, b: GcRef) -> Option<GcBox> {
 
 pie_native_fn!(pie_rem(a: GcRef, b: GcRef) -> Option<GcBox> {
     use Value::*;
-    Some(match (&*a.value(), &*b.value()) {
+    Some(match (&*a.try_value()?, &*b.try_value()?) {
         (_, Int(0)) => return None,
         (Int(a), Int(b)) => (a % b).into(),
         (Float(a), Float(b)) => (a % b).into(),
@@ -139,9 +139,21 @@ pie_native_fn!(pie_rem(a: GcRef, b: GcRef) -> Option<GcBox> {
     })
 });
 
+pie_native_fn!(pie_and(a: GcRef, b: GcRef) -> GcBox {
+    let a = pie_internal_truthy(a);
+    let b = pie_internal_truthy(b);
+    bool_to_box(a.is_some() && b.is_some())
+});
+
+pie_native_fn!(pie_or(a: GcRef, b: GcRef) -> GcBox {
+    let a = pie_internal_truthy(a);
+    let b = pie_internal_truthy(b);
+    bool_to_box(a.is_some() || b.is_some())
+});
+
 pie_native_fn!(pie_unary_add(val: GcRef) -> Option<GcBox> {
     use Value::*;
-    Some(match &*val.value() {
+    Some(match &*val.try_value()? {
         &Int(i) => i.into(),
         &Float(f) => f.into(),
         Str(s) => return s.parse::<i64>().ok().map(GcBox::from),
@@ -152,7 +164,7 @@ pie_native_fn!(pie_unary_add(val: GcRef) -> Option<GcBox> {
 
 pie_native_fn!(pie_unary_sub(val: GcRef) -> Option<GcBox> {
     use Value::*;
-    Some(match &*val.value() {
+    Some(match &*val.try_value()? {
         &Int(i) => i.neg().into(),
         &Float(f) => f.neg().into(),
         Str(s) => return s.parse::<i64>().ok().map(Neg::neg).map(GcBox::from),
@@ -163,7 +175,7 @@ pie_native_fn!(pie_unary_sub(val: GcRef) -> Option<GcBox> {
 
 pie_native_fn!(pie_unary_not(val: GcRef) -> Option<GcBox> {
     use Value::*;
-    Some(match &*val.value() {
+    Some(match &*val.try_value()? {
         &Int(i) => (i == 0).into(),
         &Float(f) => (!f.is_finite()).into(),
         Str(s) => s.is_empty().into(),

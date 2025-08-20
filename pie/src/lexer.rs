@@ -176,6 +176,12 @@ pub enum Token<'s> {
     #[token("/=")]
     /// /=
     SlashEq,
+    #[token("&&")]
+    /// &&
+    And,
+    #[token("||")]
+    /// ||
+    Or,
 
     // single-char tokens
     #[token("<")]

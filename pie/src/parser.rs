@@ -235,6 +235,7 @@ impl<'s> Parser<'s> {
                 Token::GtEq => BinaryOp::GtEq,
                 Token::LtEq => BinaryOp::LtEq,
                 Token::Percent => BinaryOp::Rem,
+                Token::And => BinaryOp::And,
                 _ => return None,
             })
         }
@@ -263,10 +264,7 @@ impl<'s> Parser<'s> {
         let lhs = self.parse_unary()?;
         self.parse_binary_op_rhs(0, lhs)
     }
-    fn parse_if_condition_and_body(
-        &mut self,
-        top_level: bool,
-    ) -> Result<Statement<'s>, Diagnostic> {
+    fn parse_if_condition_and_body(&mut self) -> Result<Statement<'s>, Diagnostic> {
         let cond = self.parse_expression()?;
         let Some(Token::LBrace) = self.advance() else {
             return Err(self.err_here(ErrorKind::Parse, "expected '{' after if condition"));
@@ -278,10 +276,16 @@ impl<'s> Parser<'s> {
         }
         let mut else_body = Vec::new();
         if self.consume_if(|t| matches!(t, Token::Elif)) {
-            else_body.push(self.parse_if_condition_and_body(false)?);
+            else_body.push(self.parse_if_condition_and_body()?);
         }
-        if top_level && self.consume_if(|t| matches!(t, Token::Else)) {
-            else_body.push(self.parse_if_condition_and_body(false)?);
+        if self.consume_if(|t| matches!(t, Token::Else)) {
+            let Some(Token::LBrace) = self.advance() else {
+                return Err(self.err_here(ErrorKind::Parse, "expected '{' after else"));
+            };
+            while !self.consume_if(|t| matches!(t, Token::RBrace)) {
+                let statement = self.parse_statement()?;
+                else_body.push(statement);
+            }
         }
         let else_body = (!else_body.is_empty()).then_some(else_body);
         Ok(Statement::If {
@@ -296,7 +300,7 @@ impl<'s> Parser<'s> {
             return Err(self.err_here(ErrorKind::Parse, "unexpected EOF in statement"));
         };
         match first {
-            Token::If => self.parse_if_condition_and_body(true),
+            Token::If => self.parse_if_condition_and_body(),
             Token::Let => {
                 let Some(Token::Ident(typ)) = self.advance() else {
                     return Err(self.err_here(ErrorKind::Parse, "expected a type after 'let'"));

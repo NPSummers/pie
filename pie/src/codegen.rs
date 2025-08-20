@@ -891,6 +891,8 @@ impl<'ctx> CodeGen<'ctx> {
                     BinaryOp::LtEq => "pie_lteq",
                     BinaryOp::GtEq => "pie_gteq",
                     BinaryOp::Rem => "pie_rem",
+                    BinaryOp::And => "pie_and",
+                    BinaryOp::Or => "pie_or",
                 };
 
                 let f = self.module.get_function(fn_name).unwrap();

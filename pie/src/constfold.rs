@@ -125,11 +125,23 @@ impl<'s> ConstVal<'s> {
             _ => return None,
         })
     }
+    pub fn as_expr(&self) -> Expression<'s> {
+        match self {
+            &ConstVal::Int(i) => Expression::Int(i),
+            &ConstVal::Float(f) => Expression::Float(f),
+            &ConstVal::Bool(b) => Expression::Bool(b),
+            ConstVal::Str(s) => Expression::Str(s.clone()),
+            ConstVal::List(l) => {
+                let l = l.into_iter().map(ConstVal::as_expr).collect();
+                Expression::ListLiteral(l)
+            }
+        }
+    }
 }
 
-fn constfold_expr<'s>(expr: &mut Expression<'s>) -> Option<ConstVal<'s>> {
+fn constfold_expr<'s>(outer: &mut Expression<'s>) -> Option<ConstVal<'s>> {
     use Expression::*;
-    match expr {
+    match outer {
         Ident(_) => (),
         &mut Int(i) => return Some(ConstVal::Int(i)),
         &mut Float(i) => return Some(ConstVal::Float(i)),
@@ -168,80 +180,93 @@ fn constfold_expr<'s>(expr: &mut Expression<'s>) -> Option<ConstVal<'s>> {
             let lhs = constfold_expr(lhs)?;
             let rhs = constfold_expr(rhs)?;
             let sides = [&lhs, &rhs];
-            macro_rules! basic_bop {
-                ($op:ident::$f:ident) => {{
-                    if let [Some(lhs), Some(rhs)] = sides.map(ConstVal::coerce_int) {
-                        return Some(ConstVal::Int(::core::ops::$op::$f(lhs, rhs)));
-                    };
-                    if let [Some(lhs), Some(rhs)] = sides.map(ConstVal::coerce_float) {
-                        return Some(ConstVal::Float(::core::ops::$op::$f(lhs, rhs)));
-                    };
-                }};
-            }
-            match op {
-                BinaryOp::Add => {
-                    basic_bop!(Add::add);
-                    if let [Some(lhs), Some(rhs)] = sides.map(ConstVal::coerce_string) {
-                        return Some(ConstVal::Str(::core::ops::Add::add(lhs, rhs)));
-                    };
+            let constant = 'cf: {
+                macro_rules! basic_bop {
+                    ($op:ident::$f:ident) => {{
+                        if let [Some(lhs), Some(rhs)] = sides.map(ConstVal::coerce_int) {
+                            break 'cf Some(ConstVal::Int(::core::ops::$op::$f(lhs, rhs)));
+                        };
+                        if let [Some(lhs), Some(rhs)] = sides.map(ConstVal::coerce_float) {
+                            break 'cf Some(ConstVal::Float(::core::ops::$op::$f(lhs, rhs)));
+                        };
+                        None::<ConstVal>
+                    }};
                 }
-                BinaryOp::Sub => basic_bop!(Sub::sub),
-                BinaryOp::Mul => {
-                    match &lhs {
-                        ConstVal::List(list) => {
-                            if let Some(factor) = rhs.coerce_int() {
-                                let factor: usize = factor.try_into().unwrap();
-                                let mut out = Vec::with_capacity(list.len() * factor);
-                                for _ in 0..factor {
-                                    out.extend(list.iter().cloned());
+                match op {
+                    BinaryOp::And => break 'cf Some(ConstVal::Bool(lhs.truthy() && rhs.truthy())),
+                    BinaryOp::Or => break 'cf Some(ConstVal::Bool(lhs.truthy() || rhs.truthy())),
+                    BinaryOp::Add => {
+                        basic_bop!(Add::add);
+                        if let [Some(lhs), Some(rhs)] = sides.map(ConstVal::coerce_string) {
+                            break 'cf Some(ConstVal::Str(::core::ops::Add::add(lhs, rhs)));
+                        };
+                        None
+                    }
+                    BinaryOp::Sub => basic_bop!(Sub::sub),
+                    BinaryOp::Mul => {
+                        match &lhs {
+                            ConstVal::List(list) => {
+                                if let Some(factor) = rhs.coerce_int() {
+                                    let factor: usize = factor.try_into().unwrap();
+                                    let mut out = Vec::with_capacity(list.len() * factor);
+                                    for _ in 0..factor {
+                                        out.extend(list.iter().cloned());
+                                    }
+                                    break 'cf Some(ConstVal::List(out));
                                 }
-                                return Some(ConstVal::List(out));
                             }
-                        }
-                        ConstVal::Str(s) => {
-                            if let Some(factor) = rhs.coerce_int() {
-                                let factor: usize = factor.try_into().unwrap();
-                                return Some(ConstVal::Str(s.repeat(factor).into()));
+                            ConstVal::Str(s) => {
+                                if let Some(factor) = rhs.coerce_int() {
+                                    let factor: usize = factor.try_into().unwrap();
+                                    break 'cf Some(ConstVal::Str(s.repeat(factor).into()));
+                                }
                             }
-                        }
-                        _ => (),
-                    };
-                    basic_bop!(Mul::mul);
+                            _ => (),
+                        };
+                        basic_bop!(Mul::mul)
+                    }
+                    BinaryOp::Div => basic_bop!(Div::div),
+                    BinaryOp::Eq => Some(ConstVal::Bool(lhs == rhs)),
+                    BinaryOp::Ne => Some(ConstVal::Bool(lhs != rhs)),
+                    BinaryOp::Lt => Some(ConstVal::Bool(lhs < rhs)),
+                    BinaryOp::Gt => Some(ConstVal::Bool(lhs > rhs)),
+                    BinaryOp::LtEq => Some(ConstVal::Bool(lhs <= rhs)),
+                    BinaryOp::GtEq => Some(ConstVal::Bool(lhs >= rhs)),
+                    BinaryOp::Rem => basic_bop!(Rem::rem),
                 }
-                BinaryOp::Div => basic_bop!(Div::div),
-                BinaryOp::Eq => return Some(ConstVal::Bool(lhs == rhs)),
-                BinaryOp::Ne => return Some(ConstVal::Bool(lhs != rhs)),
-                BinaryOp::Lt => return Some(ConstVal::Bool(lhs < rhs)),
-                BinaryOp::Gt => return Some(ConstVal::Bool(lhs > rhs)),
-                BinaryOp::LtEq => return Some(ConstVal::Bool(lhs <= rhs)),
-                BinaryOp::GtEq => return Some(ConstVal::Bool(lhs >= rhs)),
-                BinaryOp::Rem => basic_bop!(Rem::rem),
-            }
-            // TODO: Fold fully constant binary ops
+            };
+            let constant = constant?;
+            *outer = constant.as_expr();
+            return Some(constant);
         }
         Unary(op, expr) => {
             let val = constfold_expr(expr)?;
-            match op {
-                UnaryOp::Add => {
-                    if let Some(i) = val.coerce_int() {
-                        return Some(ConstVal::Int(i));
+            let constant = 'cf: {
+                match op {
+                    UnaryOp::Add => {
+                        if let Some(i) = val.coerce_int() {
+                            break 'cf Some(ConstVal::Int(i));
+                        }
+                        if let Some(v) = val.coerce_float() {
+                            break 'cf Some(ConstVal::Float(v));
+                        }
+                        None
                     }
-                    if let Some(v) = val.coerce_float() {
-                        return Some(ConstVal::Float(v));
+                    UnaryOp::Sub => {
+                        if let Some(i) = val.coerce_int() {
+                            break 'cf Some(ConstVal::Int(-i));
+                        }
+                        if let Some(v) = val.coerce_float() {
+                            break 'cf Some(ConstVal::Float(-v));
+                        }
+                        None
                     }
-                    return None;
+                    UnaryOp::Not => Some(ConstVal::Bool(!val.truthy())),
                 }
-                UnaryOp::Sub => {
-                    if let Some(i) = val.coerce_int() {
-                        return Some(ConstVal::Int(-i));
-                    }
-                    if let Some(v) = val.coerce_float() {
-                        return Some(ConstVal::Float(-v));
-                    }
-                    return None;
-                }
-                UnaryOp::Not => return Some(ConstVal::Bool(!val.truthy())),
-            }
+            };
+            let constant = constant?;
+            *outer = constant.as_expr();
+            return Some(constant);
         }
         ModuleAccess { .. } | MemberAccess { .. } => (),
     }
