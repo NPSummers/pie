@@ -750,6 +750,37 @@ impl<'ctx> CodeGen<'ctx> {
                 }
                 Some(list)
             }
+            Expression::MapLiteral(values) => {
+                let map_new = self.module.get_function("pie_map_new").unwrap();
+                let map_set = self.module.get_function("pie_map_set").unwrap();
+                let map = self
+                    .builder
+                    .build_call(map_new, &[], "map_lit_new")
+                    .unwrap()
+                    .try_as_basic_value()
+                    .left()
+                    .unwrap();
+                for (key, value) in values {
+                    let key_is_ident = matches!(value, Expression::Ident(_));
+                    let key = self.codegen_expr(key, locals).unwrap();
+                    let val_is_ident = matches!(value, Expression::Ident(_));
+                    let val = self.codegen_expr(value, locals).unwrap();
+                    self.builder
+                        .build_call(
+                            map_set,
+                            &[map.into(), key.into(), val.into()],
+                            "map_lit_set",
+                        )
+                        .unwrap();
+                    if !key_is_ident {
+                        self.build_dec_ref(key);
+                    }
+                    if !val_is_ident {
+                        self.build_dec_ref(val);
+                    }
+                }
+                Some(map)
+            }
             Expression::Str(s) => {
                 let gv = self
                     .builder

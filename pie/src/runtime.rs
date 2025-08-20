@@ -102,7 +102,7 @@ impl Display for Value {
                 if let Some((k, v)) = values.next() {
                     write!(f, "{k}: {v}", v = v.as_ref().value())?;
                 }
-                for (k, v) in m {
+                for (k, v) in values {
                     write!(f, ", {k}: {v}", v = v.as_ref().value())?;
                 }
                 write!(f, "}}")

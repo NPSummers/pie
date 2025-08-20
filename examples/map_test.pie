@@ -5,6 +5,7 @@ def void main() {
     std::map::set(h, "foo", "bar");
     let string s = std::to_string(h);
     std::print(s);
+    std::print({"map": "literal"});
 }
 
 
