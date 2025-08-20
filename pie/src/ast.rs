@@ -104,6 +104,7 @@ pub enum BinaryOp {
     Div,
     Add,
     Sub,
+    Rem,
     Eq,
     LtEq,
     GtEq,
@@ -118,7 +119,7 @@ impl BinaryOp {
         match self {
             Lt | LtEq | Gt | GtEq | Ne | Eq => 0,
             Add | Sub => 10,
-            Mul | Div => 20,
+            Mul | Div | Rem => 20,
         }
     }
 }

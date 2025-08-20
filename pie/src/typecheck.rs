@@ -262,7 +262,7 @@ fn binary_result_type(op: BinaryOp, lhs: &Type, rhs: &Type) -> Type {
             }
             Type::Any
         }
-        Sub | Mul | Div => {
+        Sub | Mul | Div | Rem => {
             if *lhs == Type::Float || *rhs == Type::Float {
                 return Type::Float;
             }

@@ -120,7 +120,6 @@ pub struct GcBox(NonNull<RefCell<Value>>);
 
 impl Drop for GcBox {
     fn drop(&mut self) {
-        eprintln!("dropping {self:?}");
         unsafe { Rc::from_raw(self.0.as_ptr()) };
     }
 }

@@ -89,6 +89,41 @@ impl<'ctx> CodeGen<'ctx> {
         Ok(())
     }
 
+    fn find_variables<'a>(
+        &self,
+        locals: &mut HashMap<&'a str, PointerValue<'ctx>>,
+        stmts: impl Iterator<Item = &'a Statement<'a>>,
+    ) {
+        let new_var = |locals: &mut HashMap<&'a str, PointerValue<'ctx>>, name| {
+            let ptr = self
+                .builder
+                .build_alloca(self.registry.ptr_type(), name)
+                .unwrap();
+            locals.insert(name, ptr);
+        };
+        for stmt in stmts {
+            match stmt {
+                Statement::For { var, body, .. } => {
+                    new_var(locals, var);
+                    self.find_variables(locals, body.iter());
+                }
+                Statement::Let { name, .. } => {
+                    new_var(locals, name);
+                }
+                Statement::While { body, .. } => {
+                    self.find_variables(locals, body.iter());
+                }
+                Statement::Assignment { target, .. } => {
+                    let Expression::Ident(var) = target else {
+                        panic!("Codegen of assignment with non-identifier left hand side is not supported")
+                    };
+                    new_var(locals, var);
+                }
+                Statement::Expr(_) | Statement::Return(_) => (),
+            }
+        }
+    }
+
     fn compile_function(&mut self, module_name: &str, func: &Function) {
         let ptr_type = self.context.ptr_type(AddressSpace::from(0u16));
         let param_types: Vec<BasicTypeEnum> = func.params.iter().map(|_| ptr_type.into()).collect();
@@ -122,6 +157,7 @@ impl<'ctx> CodeGen<'ctx> {
             let _ = self.builder.build_store(alloca, param);
             locals.insert(pname, alloca);
         }
+        self.find_variables(&mut locals, func.body.iter());
 
         let mut has_return = false;
 
@@ -169,6 +205,10 @@ impl<'ctx> CodeGen<'ctx> {
                     .expect("create call to create iterator");
                 let iterable = iterable.try_as_basic_value().left().unwrap();
 
+                let var_alloca = *locals
+                    .get(var)
+                    .expect("a variable to have been previously allocated with alloca");
+
                 let loop_bb = self.context.append_basic_block(fnv, "for_loop");
                 self.builder.build_unconditional_branch(loop_bb).unwrap();
                 self.builder.position_at_end(loop_bb);
@@ -182,10 +222,6 @@ impl<'ctx> CodeGen<'ctx> {
                     .left()
                     .unwrap()
                     .into_pointer_value();
-                let var_alloca = self
-                    .builder
-                    .build_alloca(self.registry.ptr_type(), var)
-                    .unwrap();
                 self.builder.build_store(var_alloca, next).unwrap();
 
                 let is_null = self.builder.build_is_null(next, "iter_is_null").unwrap();
@@ -246,10 +282,9 @@ impl<'ctx> CodeGen<'ctx> {
             } => {
                 // TODO: Handle expressions that don't evaluate to a value
                 if let Some(val) = self.codegen_expr(expr, locals) {
-                    let alloca = self
-                        .builder
-                        .build_alloca(self.registry.ptr_type(), name)
-                        .expect("alloca");
+                    let alloca = *locals
+                        .get(name)
+                        .expect("a variable to have been previously allocated with alloca");
                     let _ = self.builder.build_store(alloca, val);
                     locals.insert(name, alloca);
                 }
@@ -381,6 +416,26 @@ impl<'ctx> CodeGen<'ctx> {
                     .expect("call");
                 Some(call.try_as_basic_value().left().unwrap())
             }
+            Expression::ListLiteral(values) => {
+                let list_new = self.module.get_function("pie_list_new").unwrap();
+                let list_push = self.module.get_function("pie_list_push").unwrap();
+                let list = self
+                    .builder
+                    .build_call(list_new, &[], "list_lit_new")
+                    .unwrap()
+                    .try_as_basic_value()
+                    .left()
+                    .unwrap();
+                for value in values {
+                    let val = self
+                        .codegen_expr(value, locals)
+                        .unwrap_or_else(|| self.registry.ptr_type().const_null().into());
+                    self.builder
+                        .build_call(list_push, &[list.into(), val.into()], "list_lit_push")
+                        .unwrap();
+                }
+                Some(list)
+            }
             Expression::Str(s) => {
                 let gv = self
                     .builder
@@ -421,6 +476,7 @@ impl<'ctx> CodeGen<'ctx> {
                     BinaryOp::Gt => "pie_gt",
                     BinaryOp::LtEq => "pie_lteq",
                     BinaryOp::GtEq => "pie_gteq",
+                    BinaryOp::Rem => "pie_rem",
                 };
 
                 let f = self.module.get_function(fn_name).unwrap();

@@ -15,6 +15,7 @@ use inkwell::OptimizationLevel;
 use parser::Parser;
 use std::env;
 use std::fs;
+use std::time::Instant;
 
 fn main() -> anyhow::Result<()> {
     // Get file path from command line arguments
@@ -79,9 +80,12 @@ fn main() -> anyhow::Result<()> {
     };
 
     // Execute the program
-    println!("Executing program...");
+    eprintln!("Executing program...");
+    let start = Instant::now();
     let result = unsafe { main_fn.call() };
-    println!("Program finished with exit code: {}", result);
+    let took = start.elapsed();
+    eprintln!("Program finished with exit code: {}", result);
+    eprintln!("Runtime: {took:?}");
 
     Ok(())
 }

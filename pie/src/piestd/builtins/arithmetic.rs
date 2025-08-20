@@ -115,6 +115,18 @@ pie_native_fn!(pie_div(a: GcRef, b: GcRef) -> Option<GcBox> {
     })
 });
 
+pie_native_fn!(pie_rem(a: GcRef, b: GcRef) -> Option<GcBox> {
+    use Value::*;
+    Some(match (&*a.value(), &*b.value()) {
+        (_, Int(0)) => return None,
+        (Int(a), Int(b)) => (a % b).into(),
+        (Float(a), Float(b)) => (a % b).into(),
+        (&Int(a), Float(b)) => (a as f64 % b).into(),
+        (Float(a), &Int(b)) => (a % b as f64).into(),
+        _ => return None,
+    })
+});
+
 pie_native_fn!(pie_unary_add(val: GcRef) -> Option<GcBox> {
     use Value::*;
     Some(match &*val.value() {

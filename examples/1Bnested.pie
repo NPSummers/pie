@@ -1,0 +1,16 @@
+def void main() {
+    let int u = 7;
+    let int r = 11;
+    let list a = [0] * 10000;
+    for i in std::iter::range(0, 1000, 1) {
+        for j in std::iter::range(0, 100000, 1) {
+            let int temp = std::list::get(a, i);
+            temp += j % u;
+            std::list::set(a, i, temp);
+        }
+        let int temp = std::list::get(a, i);
+        temp += r;
+        std::list::set(a, i, temp);
+    }
+    std::print(std::list::get(a, r));
+}

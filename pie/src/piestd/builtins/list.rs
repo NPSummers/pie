@@ -14,14 +14,29 @@ pie_native_fn!(pie_list_len(list: GcRef) pie "std::list::len"[List] => Int -> i6
     v.len() as i64
 });
 
-pie_native_fn!(pie_list_get(list: GcRef, idx: i64) pie "std::list::get"[List, Int] => Any -> Option<GcBox> {
+pie_native_fn!(pie_list_get(list: GcRef, idx: GcRef) pie "std::list::get"[List, Int] => Any -> Option<GcBox> {
     let Value::List(v) = &*list.value() else {
+        return None;
+    };
+    let &Value::Int(idx) = &*idx.value() else {
         return None;
     };
     if idx.is_negative() {
         return None;
     }
     Some(v[idx as usize].clone())
+});
+
+pie_native_fn!(pie_list_set(list: GcRef, idx: GcRef, val: GcRef) pie "std::list::set"[List, Int, Any] {
+    let Value::List(list) = &mut *list.value_mut() else {
+        unreachable!()
+    };
+    let &Value::Int(idx) = &*idx.value() else {
+        unreachable!()
+    };
+    let val = val.value();
+    debug_assert!(!idx.is_negative());
+    list[idx as usize] = GcBox::new(val.clone());
 });
 
 pie_native_fn!(pie_list_push(list: GcRef, val: GcRef) pie "std::list::push"[List, Any] {
