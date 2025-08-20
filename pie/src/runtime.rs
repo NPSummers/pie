@@ -1,4 +1,5 @@
 #![allow(improper_ctypes_definitions)]
+use std::borrow::Cow;
 use std::cell::{LazyCell, RefCell};
 use std::collections::HashMap;
 use std::fmt::{Debug, Display};
@@ -12,7 +13,7 @@ pub enum Value {
     Int(i64),
     Float(f64),
     Bool(bool),
-    Str(String),
+    Str(Cow<'static, str>),
     List(Vec<GcBox>),
     Map(HashMap<String, GcBox>),
     Iterator(Box<dyn DebugIter>),
@@ -214,19 +215,19 @@ impl GcBox {
 
 impl From<String> for GcBox {
     fn from(value: String) -> Self {
-        GcBox::new(Value::Str(value))
+        GcBox::new(Value::Str(value.into()))
+    }
+}
+
+impl From<&'static str> for GcBox {
+    fn from(value: &'static str) -> Self {
+        GcBox::new(Value::Str(value.into()))
     }
 }
 
 impl From<Vec<GcBox>> for GcBox {
     fn from(value: Vec<GcBox>) -> Self {
         GcBox::new(Value::List(value))
-    }
-}
-
-impl From<&str> for GcBox {
-    fn from(value: &str) -> Self {
-        GcBox::new(Value::Str(value.to_owned()))
     }
 }
 

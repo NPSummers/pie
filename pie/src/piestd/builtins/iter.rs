@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     cell::{Ref, RefCell},
     collections::HashMap,
     rc::Rc,
@@ -168,13 +169,13 @@ impl Iterator for ListIter {
 
 #[derive(Debug, Clone)]
 struct StringIter {
-    borrow: BorrowWrapper<String>,
+    borrow: BorrowWrapper<Cow<'static, str>>,
     iter: std::str::Chars<'static>,
 }
 
 impl StringIter {
     pub fn new(rc: Rc<RefCell<Value>>) -> Option<Self> {
-        fn get_string(v: &Value) -> &String {
+        fn get_string(v: &Value) -> &Cow<'static, str> {
             let Value::Str(v) = &v else { unreachable!() };
             v
         }
@@ -183,10 +184,10 @@ impl StringIter {
         let Value::Str(_) = &*val else {
             return None;
         };
-        let borrow = BorrowWrapper::new(rc.clone(), get_string as fn(&Value) -> &String);
+        let borrow = BorrowWrapper::new(rc.clone(), get_string as fn(&Value) -> &Cow<'static, str>);
         // SAFETY: This reference will only exist while the Ref/Rc it references is valid, by being
         // stored in the same struct
-        let r = unsafe { borrow.get_static_ref() };
+        let r: &'static Cow<'static, str> = unsafe { borrow.get_static_ref() };
         let iter = r.chars();
         Some(StringIter { borrow, iter })
     }

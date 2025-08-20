@@ -1,4 +1,4 @@
-use std::ops::Neg;
+use std::{borrow::Cow, ops::Neg};
 
 use crate::{
     piestd::builtins::pie_native_fn,
@@ -188,9 +188,9 @@ pie_native_fn!(pie_add_in_place(dst: GcRef, src: GcRef) pie "std::num::add_in_pl
         (lhs @ &mut Int(a), Float(b)) => { *lhs = Float(a as f64 + b) },
         (Str(a), other) => {
             use std::fmt::Write;
-            write!(a, "{other}").unwrap();
+            write!(Cow::to_mut(a), "{other}").unwrap();
         },
-        (other, Str(b)) => {*other = Str(format!("{other}{b}"))},
+        (other, Str(b)) => {*other = Str(format!("{other}{b}").into())},
         _ => return,
     };
 });

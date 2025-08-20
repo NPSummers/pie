@@ -799,7 +799,7 @@ impl<'ctx> CodeGen<'ctx> {
                 );
                 global_string.set_initializer(&self.context.const_string(bytes, false));
                 let ptr = global_string.as_pointer_value();
-                let fn_str_new = self.module.get_function("pie_string_new").unwrap();
+                let fn_str_new = self.module.get_function("pie_string_new_static").unwrap();
                 let len = self.context.i64_type().const_int(s.len() as u64, false);
                 let call = self
                     .builder
