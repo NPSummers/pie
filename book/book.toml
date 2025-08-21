@@ -1,0 +1,16 @@
+[book]
+title = "The Pie Programming Language Book"
+authors = ["0x1000007e"]
+language = "en"
+multilingual = false
+src = "src"
+
+[build]
+build-dir = "build"
+
+[output.html]
+default-theme = "light"
+git-repository-url = "https://github.com/NPSummers/pie"
+copy-fonts = true
+
+
