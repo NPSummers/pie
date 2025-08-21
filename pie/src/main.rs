@@ -9,14 +9,109 @@ mod piestd;
 mod runtime;
 mod typecheck;
 
+use crate::lexer::Token;
 use diagnostics::print_diagnostic;
 use inkwell::context::Context;
 use inkwell::execution_engine::JitFunction;
 use inkwell::OptimizationLevel;
+use logos::Logos;
 use parser::Parser;
 use std::env;
 use std::fs;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
+
+fn expand_uses(
+    source: &str,
+    base_dir: &Path,
+    visited: &mut std::collections::HashSet<PathBuf>,
+) -> anyhow::Result<String> {
+    let mut out = String::with_capacity(source.len());
+    let mut last_end = 0usize;
+    let mut lexer = Token::lexer(source).spanned().peekable();
+    while let Some((tok, span)) = lexer.next() {
+        if let Ok(Token::Use) = tok {
+            // Flush text before 'use'
+            out.push_str(&source[last_end..span.start]);
+
+            // Collect path components until semicolon
+            let mut components: Vec<&str> = Vec::new();
+            // First component must be Ident
+            let Some((Ok(Token::Ident(root)), _)) = lexer.next() else {
+                // Malformed; just skip
+                last_end = span.end;
+                continue;
+            };
+            components.push(root);
+            // zero or more '/ ident'
+            loop {
+                match lexer.peek() {
+                    Some((Ok(Token::Slash), _)) => {
+                        let _ = lexer.next();
+                        if let Some((Ok(Token::Ident(seg)), _)) = lexer.next() {
+                            components.push(seg);
+                        } else {
+                            break;
+                        }
+                    }
+                    _ => break,
+                }
+            }
+            // Expect semicolon; if not found, skip gracefully
+            let mut end_pos = span.end;
+            if let Some((tok2, s)) = lexer.next() {
+                match tok2 {
+                    Ok(Token::Semicolon) => {
+                        end_pos = s.end;
+                    }
+                    _ => {
+                        end_pos = s.end;
+                    }
+                }
+            }
+
+            // If this is built-in std, drop the use
+            if components.len() >= 2 && components[0] == "pie" && components[1] == "std" {
+                last_end = end_pos;
+                continue;
+            }
+
+            // Resolve file path relative to base_dir
+            let mut path = PathBuf::from(base_dir);
+            for c in &components {
+                path.push(c);
+            }
+            path.set_extension("pie");
+
+            if path.exists() {
+                // Avoid repeated includes
+                let canonical = path.canonicalize().unwrap_or(path.clone());
+                if !visited.insert(canonical.clone()) {
+                    // already included; drop the use
+                    last_end = end_pos;
+                    continue;
+                }
+                let included_src = fs::read_to_string(&path).map_err(|e| {
+                    anyhow::anyhow!("failed to read module {}: {}", path.display(), e)
+                })?;
+                let included_base = canonical.parent().unwrap_or(base_dir);
+                let expanded_included = expand_uses(&included_src, included_base, visited)?;
+                out.push_str(&expanded_included);
+            } else {
+                eprintln!(
+                    "warning: could not resolve module '{}'; skipping",
+                    components.join("/")
+                );
+            }
+
+            last_end = end_pos;
+            continue;
+        }
+    }
+    // Append remaining tail
+    out.push_str(&source[last_end..]);
+    Ok(out)
+}
 
 fn main() -> anyhow::Result<()> {
     // Get file path from command line arguments
@@ -50,6 +145,14 @@ fn main() -> anyhow::Result<()> {
     };
     let src = fs::read_to_string(&file_path)
         .map_err(|e| anyhow::anyhow!("failed to read file {file_path}: {}", e))?;
+
+    // Preprocess: expand `use` statements by inlining referenced .pie files
+    let base_dir = std::path::Path::new(&file_path)
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| std::env::current_dir().unwrap());
+    let mut visited = std::collections::HashSet::new();
+    let src = expand_uses(&src, &base_dir, &mut visited)?;
 
     let parser = match Parser::new(&src) {
         Ok(p) => p,

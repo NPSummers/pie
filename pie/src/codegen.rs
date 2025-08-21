@@ -640,40 +640,53 @@ impl<'ctx> CodeGen<'ctx> {
                     .builder
                     .build_load(self.registry.ptr_type(), ptr, "current_val")
                     .expect("load");
+                let value_is_ident = matches!(value, Expression::Ident(_));
                 let value_val = self.codegen_expr(value, locals).expect("value expression");
 
                 // Handle different assignment operators
                 match op {
                     AssignOp::Assign => {
-                        self.store_owned_ptr(ptr, value_val, false);
+                        // Transfer/move ownership into the target slot. If RHS is an identifier,
+                        // bump its refcount because two owning slots will now point to it.
+                        self.store_owned_ptr(ptr, value_val, value_is_ident);
+                        // Do NOT dec_ref the RHS here: it has been stored into the target.
                     }
                     AssignOp::Plus => {
                         let f = self.module.get_function("pie_add_in_place").unwrap();
                         self.builder
                             .build_call(f, &[current_val.into(), value_val.into()], "add_ip")
                             .unwrap();
+                        if !value_is_ident {
+                            self.build_dec_ref(value_val);
+                        }
                     }
                     AssignOp::Minus => {
                         let f = self.module.get_function("pie_sub_in_place").unwrap();
                         self.builder
                             .build_call(f, &[current_val.into(), value_val.into()], "sub_ip")
                             .unwrap();
+                        if !value_is_ident {
+                            self.build_dec_ref(value_val);
+                        }
                     }
                     AssignOp::Star => {
                         let f = self.module.get_function("pie_mul_in_place").unwrap();
                         self.builder
                             .build_call(f, &[current_val.into(), value_val.into()], "mul_ip")
                             .unwrap();
+                        if !value_is_ident {
+                            self.build_dec_ref(value_val);
+                        }
                     }
                     AssignOp::Slash => {
                         let f = self.module.get_function("pie_div_in_place").unwrap();
                         self.builder
                             .build_call(f, &[current_val.into(), value_val.into()], "div_ip")
                             .unwrap();
+                        if !value_is_ident {
+                            self.build_dec_ref(value_val);
+                        }
                     }
-                }
-                if !matches!(value, Expression::Ident(_)) {
-                    self.build_dec_ref(value_val);
                 }
             }
             Statement::Expr(e) => {
@@ -710,6 +723,97 @@ impl<'ctx> CodeGen<'ctx> {
     ) -> Option<BasicValueEnum<'ctx>> {
         let ptr_type = self.context.ptr_type(AddressSpace::from(0u16));
         match expr {
+            Expression::MemberAccess { components } => {
+                // Lower a.b.c to chained std::map::get(a, "b")["c"]
+                let map_get = self.module.get_function("pie_map_get").unwrap();
+                let Some(first) = components.first() else {
+                    return None;
+                };
+                let Some(base_ptr) = locals.get(first) else {
+                    panic!("unknown identifier in member access: {first}");
+                };
+                let ptr_type = self.context.ptr_type(AddressSpace::from(0u16));
+                let mut current = self
+                    .builder
+                    .build_load(ptr_type, *base_ptr, "member_base")
+                    .expect("load");
+                for key in components.iter().skip(1) {
+                    let bytes = (*key).as_bytes();
+                    let g = self.module.add_global(
+                        self.context.i8_type().array_type(bytes.len() as u32),
+                        None,
+                        "gstr",
+                    );
+                    g.set_initializer(&self.context.const_string(bytes, false));
+                    let ptr = g.as_pointer_value();
+                    let fn_str_new = self.module.get_function("pie_string_new_static").unwrap();
+                    let len = self.context.i64_type().const_int(bytes.len() as u64, false);
+                    let key_box = self
+                        .builder
+                        .build_call(fn_str_new, &[ptr.into(), len.into()], "memb_key")
+                        .expect("call")
+                        .try_as_basic_value()
+                        .left()
+                        .unwrap();
+                    let call = self
+                        .builder
+                        .build_call(map_get, &[current.into(), key_box.into()], "mget_expr")
+                        .unwrap();
+                    self.build_dec_ref(key_box);
+                    let loaded = call.try_as_basic_value().left().unwrap();
+                    self.build_dec_ref(current);
+                    current = loaded;
+                }
+                Some(current)
+            }
+            Expression::StructLiteral { path: _, fields } => {
+                // Lower to a map literal at runtime
+                let map_new = self.module.get_function("pie_map_new").unwrap();
+                let map_set = self.module.get_function("pie_map_set").unwrap();
+                let map = self
+                    .builder
+                    .build_call(map_new, &[], "struct_lit_new")
+                    .unwrap()
+                    .try_as_basic_value()
+                    .left()
+                    .unwrap();
+                for (key, value) in fields {
+                    // materialize key as boxed string
+                    let bytes = (*key).as_bytes();
+                    let g = self.module.add_global(
+                        self.context.i8_type().array_type(bytes.len() as u32),
+                        None,
+                        "gstr",
+                    );
+                    g.set_initializer(&self.context.const_string(bytes, false));
+                    let ptr = g.as_pointer_value();
+                    let fn_str_new = self.module.get_function("pie_string_new_static").unwrap();
+                    let len = self.context.i64_type().const_int(bytes.len() as u64, false);
+                    let key_box = self
+                        .builder
+                        .build_call(fn_str_new, &[ptr.into(), len.into()], "struct_key")
+                        .expect("call")
+                        .try_as_basic_value()
+                        .left()
+                        .unwrap();
+
+                    let val_is_ident = matches!(value, Expression::Ident(_));
+                    let val = self.codegen_expr(value, locals).unwrap();
+                    self.builder
+                        .build_call(
+                            map_set,
+                            &[map.into(), key_box.into(), val.into()],
+                            "struct_set",
+                        )
+                        .unwrap();
+                    // Release temporary key and value if owned temporaries
+                    self.build_dec_ref(key_box);
+                    if !val_is_ident {
+                        self.build_dec_ref(val);
+                    }
+                }
+                Some(map)
+            }
             &Expression::Int(i) => {
                 let fn_int_new = self.module.get_function("pie_int_new").unwrap();
                 let cv = self.context.i64_type().const_int(i as u64, true);
@@ -1019,6 +1123,55 @@ impl<'ctx> CodeGen<'ctx> {
                             }
                         }
                         Some(call.try_as_basic_value().left().unwrap())
+                    }
+                    Expression::MemberAccess { components } => {
+                        // Lower member access chain to successive std::map::get calls
+                        let map_get = self.module.get_function("pie_map_get").unwrap();
+                        // First element must be a local identifier
+                        let Some(first) = components.first() else {
+                            panic!("empty member access")
+                        };
+                        let Some(ptr) = locals.get(first) else {
+                            panic!("unknown identifier in member access: {first}")
+                        };
+                        let ptr_type = self.context.ptr_type(AddressSpace::from(0u16));
+                        let mut current = self
+                            .builder
+                            .build_load(ptr_type, *ptr, "load_member_base")
+                            .expect("load");
+                        for key in components.iter().skip(1) {
+                            // materialize key string
+                            let bytes = (*key).as_bytes();
+                            let g = self.module.add_global(
+                                self.context.i8_type().array_type(bytes.len() as u32),
+                                None,
+                                "gstr",
+                            );
+                            g.set_initializer(&self.context.const_string(bytes, false));
+                            let ptr = g.as_pointer_value();
+                            let fn_str_new =
+                                self.module.get_function("pie_string_new_static").unwrap();
+                            let len = self.context.i64_type().const_int(bytes.len() as u64, false);
+                            let key_box = self
+                                .builder
+                                .build_call(fn_str_new, &[ptr.into(), len.into()], "memb_key")
+                                .expect("call")
+                                .try_as_basic_value()
+                                .left()
+                                .unwrap();
+
+                            let call = self
+                                .builder
+                                .build_call(map_get, &[current.into(), key_box.into()], "mget")
+                                .unwrap();
+                            self.build_dec_ref(key_box);
+                            let loaded = call.try_as_basic_value().left().unwrap();
+                            // Release previous current
+                            self.build_dec_ref(current);
+                            current = loaded;
+                        }
+                        // A call on a value: not supported; return the final value for now
+                        return Some(current);
                     }
                     expr => panic!("Codegen for {expr:#?} has not been implemented yet"),
                 }

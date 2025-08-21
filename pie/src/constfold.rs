@@ -147,6 +147,12 @@ fn constfold_expr<'s>(outer: &mut Expression<'s>) -> Option<ConstVal<'s>> {
         &mut Float(i) => return Some(ConstVal::Float(i)),
         &mut Bool(b) => return Some(ConstVal::Bool(b)),
         Str(s) => return Some(ConstVal::Str(s.clone())),
+        StructLiteral { path: _, fields } => {
+            // Const-fold field expressions if possible (do not attempt to fold into a map)
+            for (_, expr) in fields.iter_mut() {
+                _ = constfold_expr(expr);
+            }
+        }
         ListLiteral(values) => {
             let mut values = values.iter_mut();
             'constlist: {

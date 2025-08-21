@@ -1,0 +1,9 @@
+module lib {
+    module math {
+        def int square(int x) {
+            return x * x;
+        }
+    }
+}
+
+

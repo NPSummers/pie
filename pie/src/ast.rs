@@ -53,7 +53,14 @@ pub enum ModuleItem<'s> {
         expr: Expression<'s>,
     },
     Function(Function<'s>),
+    Struct(StructDef<'s>),
     Module(Module<'s>),
+}
+
+#[derive(Debug, Clone)]
+pub struct StructDef<'s> {
+    pub name: &'s str,
+    pub fields: Vec<(&'s str, TypeName<'s>)>,
 }
 
 #[derive(Debug, Clone)]
@@ -153,6 +160,10 @@ pub enum Expression<'s> {
     Bool(bool),
     Str(Cow<'s, str>),
     Ident(&'s str),
+    StructLiteral {
+        path: Vec<&'s str>,
+        fields: Vec<(&'s str, Expression<'s>)>,
+    },
     Binary(Box<Expression<'s>>, BinaryOp, Box<Expression<'s>>),
     Unary(UnaryOp, Box<Expression<'s>>),
     Call {

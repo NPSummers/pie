@@ -24,33 +24,24 @@ pie_native_fn!(pie_input_get_int() pie "std::input::get_int"[] => Int -> Option<
     Some(GcBox::new(Value::Int(buf.trim().parse().ok()?)))
 });
 
-pie_native_fn!(pie_http_get(url_val: GcRef, headers: GcRef) pie "std::http_get"[String, Map] => String -> GcBox {
-    let Value::Str(url) = &*url_val.value() else {
-        return "http error: expected url to be a string".into();
-    };
-    let Value::Map(headers) = &*headers.value() else {
-        return "http error: expected headers to be a map".into();
-    };
-
-    // build request and apply headers if provided
-    let mut req = ureq::get(url.as_ref());
-
-    for (k, v) in headers {
-        req = req.header(k.as_ref(), &v.as_ref().value().to_string());
+// Filesystem helpers
+pie_native_fn!(pie_fs_read(path: GcRef) pie "std::fs::read"[String] => String -> Option<GcBox> {
+    let Value::Str(p) = &*path.try_value()? else { return None; };
+    match std::fs::read_to_string(p.as_ref()) {
+        Ok(s) => Some(s.into()),
+        Err(_) => None,
     }
+});
 
-    match req.call() {
-        Ok(resp) => {
-            let status = resp.status();
-            let mut body = resp.into_body().read_to_string().unwrap_or_default();
-            if body.is_empty() {
-                body = format!("(status {})", status);
-            }
-            body.into()
-        }
-        Err(e) => {
-            let msg = format!("http error: {}", e);
-            msg.into()
-        }
+pie_native_fn!(pie_fs_write(path: GcRef, contents: GcRef) pie "std::fs::write"[String, String] => Bool -> GcBox {
+    let Value::Str(p) = &*path.value() else {
+        return false.into();
+    };
+    let Value::Str(c) = &*contents.value() else {
+        return false.into();
+    };
+    match std::fs::write(p.as_ref(), c.as_bytes()) {
+        Ok(_) => true.into(),
+        Err(_) => false.into(),
     }
 });

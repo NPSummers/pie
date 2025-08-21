@@ -12,6 +12,7 @@ pub enum Type {
     Bool,
     Any,
     Function(Vec<Type>, Box<Type>),
+    Struct(String, Vec<(String, Type)>),
 }
 
 pub enum ModuleNode<'s> {
@@ -68,7 +69,8 @@ impl From<&TypeName<'_>> for Type {
             TypeName::List => Type::List,
             TypeName::Map => Type::Map,
             TypeName::Void => Type::Void,
-            TypeName::Custom(_) => Type::Any,
+            // Custom names resolve later via ModuleTree lookups; default to Any here
+            TypeName::Custom(_name) => Type::Any,
             TypeName::Float => Type::Float,
             TypeName::Bool => Type::Bool,
         }
@@ -199,6 +201,7 @@ fn check_stmt<'s>(
                 Type::List => Type::Any,
                 Type::String => Type::String,
                 Type::Any => Type::Any,
+                Type::Struct(_, _) => Type::Any,
             };
 
             let old = locals.insert(var, item_type);
@@ -326,6 +329,37 @@ fn infer_expr_type<'s>(
                 return Err(format!("unresolved name '{qualified}'"));
             }
         }
+        Expression::StructLiteral {
+            path: struct_path,
+            fields,
+        } => {
+            // Find declared struct type in current module path
+            let declared = modules
+                .get(struct_path.iter().copied())
+                .or_else(|| modules.get(path.iter().copied().chain(struct_path.iter().copied())))
+                .ok_or_else(|| format!("unknown struct '{}'+", struct_path.join("::")))?;
+            let Type::Struct(ref _n, ref decl_fields) = declared else {
+                return Err(format!("'{}' is not a struct", struct_path.join("::")));
+            };
+            // Validate provided fields exist and types are compatible
+            for (field_name, expr) in fields {
+                let Some((_, expected_type)) = decl_fields.iter().find(|(n, _)| n == field_name)
+                else {
+                    return Err(format!(
+                        "unknown field '{field_name}' for struct '{}'",
+                        struct_path.join("::")
+                    ));
+                };
+                let at = infer_expr_type(expr, locals, modules, path)?;
+                if *expected_type != Type::Any && at != Type::Any && *expected_type != at {
+                    return Err(format!(
+                        "field '{field_name}' type mismatch in struct '{}': expected {:?}, got {:?}",
+                        struct_path.join("::"), expected_type, at
+                    ));
+                }
+            }
+            declared
+        }
         Expression::MemberAccess { .. } => Type::Any,
         Expression::Binary(lhs, op, rhs) => {
             let lt = infer_expr_type(lhs, locals, modules, path)?;
@@ -422,6 +456,15 @@ pub fn typecheck(registry: &Registry<'_>, prog: &Program<'_>) -> Result<(), Stri
                     let params = func.params.iter().map(|(t, _)| t.into()).collect();
                     modules.insert(path, Type::Function(params, Box::new(ret)));
                 }
+                ModuleItem::Struct(def) => {
+                    let path = path.iter().copied().chain([def.name]);
+                    let field_types: Vec<(String, Type)> = def
+                        .fields
+                        .iter()
+                        .map(|(n, t)| ((*n).to_string(), t.into()))
+                        .collect();
+                    modules.insert(path, Type::Struct(def.name.to_string(), field_types));
+                }
                 ModuleItem::Module(_) => (),
             }
             modules
@@ -443,7 +486,7 @@ pub fn typecheck(registry: &Registry<'_>, prog: &Program<'_>) -> Result<(), Stri
                         check_let(&modules, path, name, typ.into(), expr)
                     }
                     ModuleItem::Function(func) => check_fn(&modules, path, func),
-                    _ => Ok(()),
+                    ModuleItem::Struct(_) | ModuleItem::Module(_) => Ok(()),
                 };
                 if let Err(err) = check {
                     let mut text = errors

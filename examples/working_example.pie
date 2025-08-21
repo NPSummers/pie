@@ -1,32 +1,16 @@
 use pie/std;
+use lib/math;
 
 module demo {
-    def int get_meaning() {
-        let int x = 10;
-        x += 6;
-        return x + 26;
+    struct Person {
+        name: string,
+        age: int,
     }
 }
 
 def void main() {
-    let int meaning = demo::get_meaning();
-    std::print(meaning);
+    std::print("square(7) from lib/math: " + lib::math::square(7));
 
-    let int i = 0;
-    while i < 3 {
-        std::print(i);
-        i += 1;
-    }
-
-    for n in std::iter::range(0, 20, 1) {
-        if n % 5 == 0 && n % 3 == 0 {
-            std::print("FizzBuzz");
-        } elif n % 3 == 0 {
-            std::print("Fizz");
-        } elif n % 5 == 0 {
-            std::print("Buzz");
-        } else {
-            std::print(n);
-        }
-    }
+    let Person p = demo::Person { name: "Ada", age: 37 };
+    std::print(p.name);
 }
