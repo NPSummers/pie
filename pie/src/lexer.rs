@@ -98,6 +98,9 @@ pub enum Token<'s> {
     #[token("def")]
     /// def
     Def,
+    #[token("struct")]
+    /// struct
+    Struct,
     #[token("return")]
     /// return
     Return,

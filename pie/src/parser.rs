@@ -162,8 +162,81 @@ impl<'s> Parser<'s> {
                     args,
                 })
             }
-            Token::ModuleAccess(components) => Ok(Expression::ModuleAccess { components }),
-            Token::Ident(id) => Ok(Expression::Ident(id)),
+            Token::ModuleAccess(components) => {
+                // possible qualified struct literal: Module::Name '{' ... '}'
+                if self.consume_if(|t| matches!(t, Token::LBrace)) {
+                    let mut fields = Vec::new();
+                    while !self.consume_if(|t| matches!(t, Token::RBrace)) {
+                        let Some(Token::Ident(field)) = self.advance() else {
+                            return Err(self.err_here(
+                                ErrorKind::Parse,
+                                "expected field name in struct literal",
+                            ));
+                        };
+                        if !self.consume_if(|t| matches!(t, Token::Colon)) {
+                            return Err(self.err_here(
+                                ErrorKind::Parse,
+                                "expected ':' after field name in struct literal",
+                            ));
+                        }
+                        let expr = self.parse_expression()?;
+                        fields.push((field, expr));
+                        if !self.consume_if(|t| matches!(t, Token::Comma)) {
+                            let Some(Token::RBrace) = self.advance() else {
+                                return Err(self.err_here(
+                                    ErrorKind::Parse,
+                                    "expected '}' to close struct literal",
+                                ));
+                            };
+                            break;
+                        }
+                    }
+                    Ok(Expression::StructLiteral {
+                        path: components,
+                        fields,
+                    })
+                } else {
+                    Ok(Expression::ModuleAccess { components })
+                }
+            }
+            Token::MemberAccess(components) => Ok(Expression::MemberAccess { components }),
+            Token::Ident(id) => {
+                // possible struct literal: Ident '{' field: expr, ... '}'
+                if self.consume_if(|t| matches!(t, Token::LBrace)) {
+                    let mut fields = Vec::new();
+                    while !self.consume_if(|t| matches!(t, Token::RBrace)) {
+                        let Some(Token::Ident(field)) = self.advance() else {
+                            return Err(self.err_here(
+                                ErrorKind::Parse,
+                                "expected field name in struct literal",
+                            ));
+                        };
+                        if !self.consume_if(|t| matches!(t, Token::Colon)) {
+                            return Err(self.err_here(
+                                ErrorKind::Parse,
+                                "expected ':' after field name in struct literal",
+                            ));
+                        }
+                        let expr = self.parse_expression()?;
+                        fields.push((field, expr));
+                        if !self.consume_if(|t| matches!(t, Token::Comma)) {
+                            let Some(Token::RBrace) = self.advance() else {
+                                return Err(self.err_here(
+                                    ErrorKind::Parse,
+                                    "expected '}' to close struct literal",
+                                ));
+                            };
+                            break;
+                        }
+                    }
+                    Ok(Expression::StructLiteral {
+                        path: vec![id],
+                        fields,
+                    })
+                } else {
+                    Ok(Expression::Ident(id))
+                }
+            }
             Token::LParen => {
                 let expr = self.parse_expression()?;
                 if !matches!(self.advance(), Some(Token::RParen)) {
@@ -405,6 +478,37 @@ impl<'s> Parser<'s> {
             return Err(self.err_here(ErrorKind::Parse, "unexpected EOF in module item"));
         };
         match first {
+            Token::Struct => {
+                let Some(Token::Ident(name)) = self.advance() else {
+                    return Err(self.err_here(ErrorKind::Parse, "expected a name after 'struct'"));
+                };
+                let Some(Token::LBrace) = self.advance() else {
+                    return Err(self.err_here(ErrorKind::Parse, "expected '{' after struct name"));
+                };
+                let mut fields = Vec::new();
+                while !self.consume_if(|t| matches!(t, Token::RBrace)) {
+                    let Some(Token::Ident(field_name)) = self.advance() else {
+                        return Err(
+                            self.err_here(ErrorKind::Parse, "expected a field name in struct")
+                        );
+                    };
+                    if !self.consume_if(|t| matches!(t, Token::Colon)) {
+                        return Err(
+                            self.err_here(ErrorKind::Parse, "expected ':' after field name")
+                        );
+                    }
+                    let Some(Token::Ident(typ)) = self.advance() else {
+                        return Err(self.err_here(
+                            ErrorKind::Parse,
+                            "expected a type after ':' in struct field",
+                        ));
+                    };
+                    fields.push((field_name, typ.into()));
+                    // optional comma
+                    let _ = self.consume_if(|t| matches!(t, Token::Comma));
+                }
+                Ok(ModuleItem::Struct(StructDef { name, fields }))
+            }
             Token::Let => {
                 let Some(Token::Ident(typ)) = self.advance() else {
                     return Err(self.err_here(ErrorKind::Parse, "expected a type after 'let'"));
@@ -551,7 +655,7 @@ impl<'s> Parser<'s> {
 
         while !self.remaining().is_empty() {
             match self.peek().unwrap() {
-                Token::Def | Token::Let => {
+                Token::Def | Token::Let | Token::Struct => {
                     let main_item = self.parse_module_item()?;
                     main_items.push(main_item);
                 }
