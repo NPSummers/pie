@@ -169,10 +169,10 @@ fn main() -> anyhow::Result<()> {
         }
     };
     #[cfg(debug_assertions)]
-    eprintln!("Program before constfolding: {prog:#?}");
+    //eprintln!("Program before constfolding: {prog:#?}");
     constfold::constfold_program(&mut prog);
     #[cfg(debug_assertions)]
-    eprintln!("Program after constfolding: {prog:#?}");
+    //eprintln!("Program after constfolding: {prog:#?}");
 
     // println!("{prog:#?}");
 
